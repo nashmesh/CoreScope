@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -210,6 +211,9 @@ func main() {
 		log.Printf("No channel keys loaded — GRP_TXT packets will not be decrypted")
 	}
 
+	regionKeys := loadRegionKeys(cfg)
+	store.BackfillDefaultScopeAsync(regionKeys)
+
 	// Connect to each MQTT source
 	var clients []mqtt.Client
 	connectedCount := 0
@@ -264,7 +268,7 @@ func main() {
 		// Capture source for closure
 		src := source
 		opts.SetDefaultPublishHandler(func(c mqtt.Client, m mqtt.Message) {
-			handleMessage(store, tag, src, m, channelKeys, cfg)
+			handleMessage(store, tag, src, m, channelKeys, regionKeys, cfg)
 		})
 
 		client := mqtt.NewClient(opts)
@@ -398,7 +402,7 @@ func buildMQTTOpts(source MQTTSource) *mqtt.ClientOptions {
 	return opts
 }
 
-func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, cfg *Config) {
+func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, channelKeys map[string]string, regionKeys map[string][]byte, cfg *Config) {
 	// Liveness watchdog (#1212): record receipt before any processing so a
 	// slow handler still counts as "source is alive". Cheap atomic store.
 	markLivenessForTag(tag, time.Now())
@@ -615,7 +619,7 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 				log.Printf("MQTT [%s] foreign advert: node=%s name=%s lat=%.4f lon=%.4f observer=%s",
 					tag, truncPK, decoded.Payload.Name, lat, lon, firstNonEmpty(mqttMsg.Origin, observerID))
 			}
-			pktData := BuildPacketData(mqttMsg, decoded, observerID, region)
+			pktData := BuildPacketData(mqttMsg, decoded, observerID, region, regionKeys)
 			pktData.Foreign = foreign
 			isNew, err := store.InsertTransmission(pktData)
 			if err != nil {
@@ -641,10 +645,16 @@ func handleMessage(store *Store, tag string, source MQTTSource, m mqtt.Message, 
 					log.Printf("MQTT [%s] node telemetry update error: %v", tag, err)
 				}
 			}
+			// Update default_scope when advert carries a matched transport scope (#899)
+			if pktData.IsTransportScoped {
+				if err := store.UpdateNodeDefaultScope(decoded.Payload.PubKey, pktData.ScopeName); err != nil {
+					log.Printf("MQTT [%s] node default_scope update error: %v", tag, err)
+				}
+			}
 		} else {
 			// Non-ADVERT packets: store normally (routing/channel messages from
 			// in-area observers are relevant regardless of relay hop origin).
-			pktData := BuildPacketData(mqttMsg, decoded, observerID, region)
+			pktData := BuildPacketData(mqttMsg, decoded, observerID, region, regionKeys)
 			if _, err := store.InsertTransmission(pktData); err != nil {
 				log.Printf("MQTT [%s] db insert error: %v", tag, err)
 			}
@@ -1083,6 +1093,55 @@ func loadChannelKeys(cfg *Config, configPath string) map[string]string {
 	}
 
 	return keys
+}
+
+func loadRegionKeys(cfg *Config) map[string][]byte {
+	keys := make(map[string][]byte)
+	for _, raw := range cfg.HashRegions {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			log.Printf("[regions] skipping empty hashRegions entry")
+			continue
+		}
+		if !strings.HasPrefix(name, "#") {
+			name = "#" + name
+		}
+		if _, exists := keys[name]; exists {
+			log.Printf("[regions] duplicate region %q ignored", name)
+			continue
+		}
+		h := sha256.Sum256([]byte(name))
+		keys[name] = h[:16]
+	}
+	if len(keys) > 0 {
+		log.Printf("[regions] %d region key(s) loaded", len(keys))
+	}
+	return keys
+}
+
+// matchScope performs one HMAC-SHA256 per configured region. Expected
+// len(regionKeys) ≤ 50; beyond that, consider a pre-indexed lookup table.
+func matchScope(regionKeys map[string][]byte, payloadType byte, payloadRaw []byte, code1 string) string {
+	if code1 == "0000" || len(regionKeys) == 0 || len(payloadRaw) == 0 {
+		return ""
+	}
+	for name, key := range regionKeys {
+		mac := hmac.New(sha256.New, key)
+		mac.Write([]byte{payloadType})
+		mac.Write(payloadRaw)
+		hmacBytes := mac.Sum(nil)
+		code := uint16(hmacBytes[0]) | uint16(hmacBytes[1])<<8
+		if code == 0 {
+			code = 1
+		} else if code == 0xFFFF {
+			code = 0xFFFE
+		}
+		codeBytes := [2]byte{byte(code & 0xFF), byte(code >> 8)}
+		if strings.ToUpper(hex.EncodeToString(codeBytes[:])) == code1 {
+			return name
+		}
+	}
+	return ""
 }
 
 // Version info (set via ldflags)

@@ -34,13 +34,6 @@ type Server struct {
 	commit    string
 	buildTime string
 
-	// Guards s.cfg.GeoFilter — read by ingest/handler goroutines, written by PUT handler
-	cfgMu sync.RWMutex
-
-	// Serializes concurrent PUT /api/config/geo-filter disk writes so requests
-	// can't race on the .tmp file or interleave disk/memory updates.
-	saveMu sync.Mutex
-
 	// Cached runtime.MemStats to avoid stop-the-world pauses on every health check
 	memStatsMu   sync.Mutex
 	memStatsCache runtime.MemStats
@@ -51,27 +44,24 @@ type Server struct {
 	statsCache   *StatsResponse
 	statsCachedAt time.Time
 
+	// Guards s.cfg.GeoFilter — read by ingest/handler goroutines, written by PUT handler
+	cfgMu sync.RWMutex
+
+	// Serializes concurrent PUT /api/config/geo-filter disk writes so requests
+	// can't race on the .tmp file or interleave disk/memory updates.
+	saveMu sync.Mutex
+
 	// Neighbor affinity graph (lazy-built, cached with TTL)
 	neighborMu    sync.Mutex
 	neighborGraph *NeighborGraph
 
+	// Cached /api/scope-stats response — per-window, recomputed at most once every 30s
+	scopeStatsMu       sync.Mutex
+	scopeStatsCache    map[string]*ScopeStatsResponse
+	scopeStatsCachedAt map[string]time.Time
+
 	// Router reference for OpenAPI spec generation
 	router *mux.Router
-}
-
-// getGeoFilter returns a pointer to the current geo_filter config under read lock.
-// Callers MUST NOT mutate the returned struct.
-func (s *Server) getGeoFilter() *GeoFilterConfig {
-	s.cfgMu.RLock()
-	defer s.cfgMu.RUnlock()
-	return s.cfg.GeoFilter
-}
-
-// setGeoFilter atomically swaps the geo_filter config; used by PUT /api/config/geo-filter.
-func (s *Server) setGeoFilter(gf *GeoFilterConfig) {
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
-	s.cfg.GeoFilter = gf
 }
 
 // PerfStats tracks request performance.
@@ -126,6 +116,21 @@ func (s *Server) getMemStats() runtime.MemStats {
 	return s.memStatsCache
 }
 
+// getGeoFilter returns a pointer to the current geo_filter config under read lock.
+// Callers MUST NOT mutate the returned struct.
+func (s *Server) getGeoFilter() *GeoFilterConfig {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return s.cfg.GeoFilter
+}
+
+// setGeoFilter atomically swaps the geo_filter config; used by PUT /api/config/geo-filter.
+func (s *Server) setGeoFilter(gf *GeoFilterConfig) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	s.cfg.GeoFilter = gf
+}
+
 // RegisterRoutes sets up all HTTP routes on the given router.
 func (s *Server) RegisterRoutes(r *mux.Router) {
 	s.router = r
@@ -153,6 +158,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	// System endpoints
 	r.HandleFunc("/api/health", s.handleHealth).Methods("GET")
 	r.HandleFunc("/api/stats", s.handleStats).Methods("GET")
+	r.HandleFunc("/api/scope-stats", s.handleScopeStats).Methods("GET")
 	r.HandleFunc("/api/perf", s.handlePerf).Methods("GET")
 	r.HandleFunc("/api/perf/io", s.handlePerfIO).Methods("GET")
 	r.HandleFunc("/api/perf/sqlite", s.handlePerfSqlite).Methods("GET")
@@ -2944,6 +2950,47 @@ func (s *Server) handleDroppedPackets(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, results)
 }
+
+func (s *Server) handleScopeStats(w http.ResponseWriter, r *http.Request) {
+	const scopeStatsTTL = 30 * time.Second
+
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "24h"
+	}
+	if window != "1h" && window != "24h" && window != "7d" {
+		writeError(w, 400, "window must be 1h, 24h, or 7d")
+		return
+	}
+
+	s.scopeStatsMu.Lock()
+	if s.scopeStatsCache != nil {
+		if cached, ok := s.scopeStatsCache[window]; ok && time.Since(s.scopeStatsCachedAt[window]) < scopeStatsTTL {
+			s.scopeStatsMu.Unlock()
+			writeJSON(w, cached)
+			return
+		}
+	}
+	s.scopeStatsMu.Unlock()
+
+	resp, err := s.db.GetScopeStats(window)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+
+	s.scopeStatsMu.Lock()
+	if s.scopeStatsCache == nil {
+		s.scopeStatsCache = make(map[string]*ScopeStatsResponse)
+		s.scopeStatsCachedAt = make(map[string]time.Time)
+	}
+	s.scopeStatsCache[window] = resp
+	s.scopeStatsCachedAt[window] = time.Now()
+	s.scopeStatsMu.Unlock()
+
+	writeJSON(w, resp)
+}
+
 // handlePruneGeoFilter identifies (dry_run=true, default) or enqueues (confirm=true)
 // deletion of nodes whose GPS coordinates fall outside the currently configured
 // geo_filter. Nodes with no GPS fix are always kept. Requires geo_filter to be

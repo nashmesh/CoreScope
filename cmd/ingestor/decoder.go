@@ -169,6 +169,7 @@ type DecodedPacket struct {
 	Payload        Payload         `json:"payload"`
 	Raw            string          `json:"raw"`
 	Anomaly        string          `json:"anomaly,omitempty"`
+	payloadRaw     []byte
 }
 
 func decodeHeader(b byte) Header {
@@ -927,6 +928,7 @@ func DecodePacket(hexString string, channelKeys map[string]string, validateSigna
 		Payload:        payload,
 		Raw:            strings.ToUpper(hexString),
 		Anomaly:        anomaly,
+		payloadRaw:     payloadBuf,
 	}, nil
 }
 

@@ -15,6 +15,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// routeTypeTransport covers FLOOD (0) and DIRECT (3) route types — packets
+// that carry transport-level scoping via Code1.
+const routeTypeTransportSQL = "route_type IN (0, 3)"
+
 // DB wraps a read-only connection to the MeshCore SQLite database.
 type DB struct {
 	conn             *sql.DB
@@ -22,6 +26,8 @@ type DB struct {
 	isV3             bool   // v3 schema: observer_idx in observations (vs observer_id in v2)
 	hasResolvedPath  bool   // observations table has resolved_path column
 	hasObsRawHex     bool   // observations table has raw_hex column (#881)
+	hasScopeName     bool   // transmissions.scope_name column exists (#899)
+	hasDefaultScope  bool   // nodes.default_scope column exists (#899)
 
 	// Channel list cache (60s TTL) — avoids repeated GROUP BY scans (#762)
 	channelsCacheMu  sync.Mutex
@@ -83,6 +89,52 @@ func (db *DB) detectSchema() {
 			}
 		}
 	}
+
+	txRows, err := db.conn.Query("PRAGMA table_info(transmissions)")
+	if err != nil {
+		return
+	}
+	defer txRows.Close()
+	for txRows.Next() {
+		var cid int
+		var colName string
+		var colType sql.NullString
+		var notNull, pk int
+		var dflt sql.NullString
+		if txRows.Scan(&cid, &colName, &colType, &notNull, &dflt, &pk) == nil {
+			if colName == "scope_name" {
+				db.hasScopeName = true
+			}
+		}
+	}
+
+	nodeRows, err := db.conn.Query("PRAGMA table_info(nodes)")
+	if err != nil {
+		return
+	}
+	defer nodeRows.Close()
+	for nodeRows.Next() {
+		var cid int
+		var colName string
+		var colType sql.NullString
+		var notNull, pk int
+		var dflt sql.NullString
+		if nodeRows.Scan(&cid, &colName, &colType, &notNull, &dflt, &pk) == nil {
+			if colName == "default_scope" {
+				db.hasDefaultScope = true
+			}
+		}
+	}
+}
+
+// nodeSelectCols returns the SELECT column list for nodes queries.
+// When hasDefaultScope is true, default_scope is appended as the last column.
+func (db *DB) nodeSelectCols() string {
+	cols := "public_key, name, role, lat, lon, last_seen, first_seen, advert_count, battery_mv, temperature_c, foreign_advert"
+	if db.hasDefaultScope {
+		cols += ", default_scope"
+	}
+	return cols
 }
 
 // transmissionBaseSQL returns the SELECT columns and JOIN clause for transmission-centric queries.
@@ -108,6 +160,9 @@ func (db *DB) transmissionBaseSQL() (selectCols, observerJoin string) {
 			)
 			LEFT JOIN observers obs2 ON obs2.id = o.observer_id`
 	}
+	if db.hasScopeName {
+		selectCols += `, t.scope_name`
+	}
 	return
 }
 
@@ -118,13 +173,18 @@ func (db *DB) scanTransmissionRow(rows *sql.Rows) map[string]interface{} {
 	var rawHex, hash, firstSeen, decodedJSON, observerID, observerName, observerIATA, pathJSON, direction sql.NullString
 	var routeType, payloadType sql.NullInt64
 	var snr, rssi sql.NullFloat64
+	var scopeName sql.NullString
 
-	if err := rows.Scan(&id, &rawHex, &hash, &firstSeen, &routeType, &payloadType, &decodedJSON,
-		&observationCount, &observerID, &observerName, &observerIATA, &snr, &rssi, &pathJSON, &direction); err != nil {
+	scanArgs := []interface{}{&id, &rawHex, &hash, &firstSeen, &routeType, &payloadType, &decodedJSON,
+		&observationCount, &observerID, &observerName, &observerIATA, &snr, &rssi, &pathJSON, &direction}
+	if db.hasScopeName {
+		scanArgs = append(scanArgs, &scopeName)
+	}
+	if err := rows.Scan(scanArgs...); err != nil {
 		return nil
 	}
 
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"id":                id,
 		"raw_hex":           nullStr(rawHex),
 		"hash":              nullStr(hash),
@@ -142,6 +202,10 @@ func (db *DB) scanTransmissionRow(rows *sql.Rows) map[string]interface{} {
 		"path_json":         nullStr(pathJSON),
 		"direction":         nullStr(direction),
 	}
+	if db.hasScopeName {
+		m["scope_name"] = nullStr(scopeName)
+	}
+	return m
 }
 
 // Node represents a row from the nodes table.
@@ -829,7 +893,7 @@ func (db *DB) GetNodes(limit, offset int, role, search, before, lastHeard, sortB
 	var total int
 	db.conn.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM nodes %s", w), args...).Scan(&total)
 
-	querySQL := fmt.Sprintf("SELECT public_key, name, role, lat, lon, last_seen, first_seen, advert_count, battery_mv, temperature_c, foreign_advert FROM nodes %s ORDER BY %s LIMIT ? OFFSET ?", w, order)
+	querySQL := fmt.Sprintf("SELECT %s FROM nodes %s ORDER BY %s LIMIT ? OFFSET ?", db.nodeSelectCols(), w, order)
 	qArgs := append(args, limit, offset)
 
 	rows, err := db.conn.Query(querySQL, qArgs...)
@@ -840,7 +904,7 @@ func (db *DB) GetNodes(limit, offset int, role, search, before, lastHeard, sortB
 
 	nodes := make([]map[string]interface{}, 0)
 	for rows.Next() {
-		n := scanNodeRow(rows)
+		n := db.scanNodeRow(rows)
 		if n != nil {
 			nodes = append(nodes, n)
 		}
@@ -855,8 +919,7 @@ func (db *DB) SearchNodes(query string, limit int) ([]map[string]interface{}, er
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := db.conn.Query(`SELECT public_key, name, role, lat, lon, last_seen, first_seen, advert_count, battery_mv, temperature_c, foreign_advert
-		FROM nodes WHERE name LIKE ? OR public_key LIKE ? ORDER BY last_seen DESC LIMIT ?`,
+	rows, err := db.conn.Query(fmt.Sprintf("SELECT %s FROM nodes WHERE name LIKE ? OR public_key LIKE ? ORDER BY last_seen DESC LIMIT ?", db.nodeSelectCols()),
 		"%"+query+"%", query+"%", limit)
 	if err != nil {
 		return nil, err
@@ -865,7 +928,7 @@ func (db *DB) SearchNodes(query string, limit int) ([]map[string]interface{}, er
 
 	nodes := make([]map[string]interface{}, 0)
 	for rows.Next() {
-		n := scanNodeRow(rows)
+		n := db.scanNodeRow(rows)
 		if n != nil {
 			nodes = append(nodes, n)
 		}
@@ -894,8 +957,7 @@ func (db *DB) GetNodeByPrefix(prefix string) (map[string]interface{}, bool, erro
 		}
 	}
 	rows, err := db.conn.Query(
-		`SELECT public_key, name, role, lat, lon, last_seen, first_seen, advert_count, battery_mv, temperature_c, foreign_advert
-		   FROM nodes WHERE public_key LIKE ? LIMIT 2`,
+		fmt.Sprintf("SELECT %s FROM nodes WHERE public_key LIKE ? LIMIT 2", db.nodeSelectCols()),
 		prefix+"%",
 	)
 	if err != nil {
@@ -905,7 +967,7 @@ func (db *DB) GetNodeByPrefix(prefix string) (map[string]interface{}, bool, erro
 	var first map[string]interface{}
 	count := 0
 	for rows.Next() {
-		n := scanNodeRow(rows)
+		n := db.scanNodeRow(rows)
 		if n == nil {
 			continue
 		}
@@ -924,13 +986,13 @@ func (db *DB) GetNodeByPrefix(prefix string) (map[string]interface{}, bool, erro
 
 // GetNodeByPubkey returns a single node.
 func (db *DB) GetNodeByPubkey(pubkey string) (map[string]interface{}, error) {
-	rows, err := db.conn.Query("SELECT public_key, name, role, lat, lon, last_seen, first_seen, advert_count, battery_mv, temperature_c, foreign_advert FROM nodes WHERE public_key = ?", pubkey)
+	rows, err := db.conn.Query(fmt.Sprintf("SELECT %s FROM nodes WHERE public_key = ?", db.nodeSelectCols()), pubkey)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	if rows.Next() {
-		return scanNodeRow(rows), nil
+		return db.scanNodeRow(rows), nil
 	}
 	return nil, nil
 }
@@ -1958,7 +2020,9 @@ func scanPacketRow(rows *sql.Rows) map[string]interface{} {
 	}
 }
 
-func scanNodeRow(rows *sql.Rows) map[string]interface{} {
+// scanNodeRow scans a node row. When hasDefaultScope is true the SELECT must
+// include default_scope as the last column.
+func (db *DB) scanNodeRow(rows *sql.Rows) map[string]interface{} {
 	var pk string
 	var name, role, lastSeen, firstSeen sql.NullString
 	var lat, lon sql.NullFloat64
@@ -1966,8 +2030,13 @@ func scanNodeRow(rows *sql.Rows) map[string]interface{} {
 	var batteryMv sql.NullInt64
 	var temperatureC sql.NullFloat64
 	var foreign sql.NullInt64
+	var defaultScope sql.NullString
 
-	if err := rows.Scan(&pk, &name, &role, &lat, &lon, &lastSeen, &firstSeen, &advertCount, &batteryMv, &temperatureC, &foreign); err != nil {
+	scanArgs := []interface{}{&pk, &name, &role, &lat, &lon, &lastSeen, &firstSeen, &advertCount, &batteryMv, &temperatureC, &foreign}
+	if db.hasDefaultScope {
+		scanArgs = append(scanArgs, &defaultScope)
+	}
+	if err := rows.Scan(scanArgs...); err != nil {
 		return nil
 	}
 	m := map[string]interface{}{
@@ -1993,6 +2062,9 @@ func scanNodeRow(rows *sql.Rows) map[string]interface{} {
 		m["temperature_c"] = temperatureC.Float64
 	} else {
 		m["temperature_c"] = nil
+	}
+	if db.hasDefaultScope {
+		m["default_scope"] = nullStr(defaultScope)
 	}
 	return m
 }
@@ -2433,6 +2505,106 @@ func (db *DB) GetSignatureDropCount() int64 {
 		return 0
 	}
 	return count
+}
+
+func (db *DB) GetScopeStats(window string) (*ScopeStatsResponse, error) {
+	if !db.hasScopeName {
+		return nil, fmt.Errorf("scope_name column not present — run ingestor to apply migrations")
+	}
+
+	var since string
+	var bucketExpr string
+	switch window {
+	case "1h":
+		since = time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+		// 5-minute buckets
+		bucketExpr = `strftime('%Y-%m-%dT%H:', first_seen) || printf('%02d', (CAST(strftime('%M', first_seen) AS INTEGER) / 5) * 5) || ':00Z'`
+	case "7d":
+		since = time.Now().Add(-7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+		// 6-hour buckets
+		bucketExpr = `strftime('%Y-%m-%dT', first_seen) || printf('%02d', (CAST(strftime('%H', first_seen) AS INTEGER) / 6) * 6) || ':00:00Z'`
+	default: // "24h"
+		window = "24h"
+		since = time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+		// 1-hour buckets
+		bucketExpr = `strftime('%Y-%m-%dT%H:00:00Z', first_seen)`
+	}
+
+	resp := &ScopeStatsResponse{Window: window}
+
+	// Summary counts
+	row := db.conn.QueryRow(`
+		SELECT
+			COUNT(*) AS transport_total,
+			COUNT(scope_name) AS scoped,
+			COALESCE(SUM(CASE WHEN scope_name IS NULL THEN 1 ELSE 0 END), 0) AS unscoped,
+			COALESCE(SUM(CASE WHEN scope_name = '' THEN 1 ELSE 0 END), 0) AS unknown_scope
+		FROM transmissions
+		WHERE ` + routeTypeTransportSQL + ` AND first_seen >= ?
+	`, since)
+	if err := row.Scan(
+		&resp.Summary.TransportTotal,
+		&resp.Summary.Scoped,
+		&resp.Summary.Unscoped,
+		&resp.Summary.UnknownScope,
+	); err != nil {
+		return nil, fmt.Errorf("scope summary query: %w", err)
+	}
+
+	// Per-region counts (named regions only)
+	rows, err := db.conn.Query(`
+		SELECT scope_name, COUNT(*) AS cnt
+		FROM transmissions
+		WHERE ` + routeTypeTransportSQL + ` AND scope_name IS NOT NULL AND scope_name != '' AND first_seen >= ?
+		GROUP BY scope_name
+		ORDER BY cnt DESC
+	`, since)
+	if err != nil {
+		return nil, fmt.Errorf("scope byRegion query: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rc ScopeRegionCount
+		if rows.Scan(&rc.Name, &rc.Count) == nil {
+			resp.ByRegion = append(resp.ByRegion, rc)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scope byRegion iteration: %w", err)
+	}
+	if resp.ByRegion == nil {
+		resp.ByRegion = []ScopeRegionCount{}
+	}
+
+	// Time series
+	tsQuery := fmt.Sprintf(`
+		SELECT %s AS bucket,
+			COUNT(scope_name) AS scoped,
+			SUM(CASE WHEN scope_name IS NULL THEN 1 ELSE 0 END) AS unscoped
+		FROM transmissions
+		WHERE ` + routeTypeTransportSQL + ` AND first_seen >= ?
+		GROUP BY bucket
+		ORDER BY bucket
+	`, bucketExpr)
+	tsRows, err := db.conn.Query(tsQuery, since)
+	if err != nil {
+		return nil, fmt.Errorf("scope timeseries query: %w", err)
+	}
+	defer tsRows.Close()
+	for tsRows.Next() {
+		var pt ScopeTimePoint
+		if tsRows.Scan(&pt.T, &pt.Scoped, &pt.Unscoped) == nil {
+			resp.TimeSeries = append(resp.TimeSeries, pt)
+		}
+	}
+	if err := tsRows.Err(); err != nil {
+		return nil, fmt.Errorf("scope timeseries iteration: %w", err)
+	}
+	if resp.TimeSeries == nil {
+		resp.TimeSeries = []ScopeTimePoint{}
+	}
+
+	return resp, nil
 }
 
 // NodeForGeoPrune holds the minimal fields needed for geo-filter pruning.

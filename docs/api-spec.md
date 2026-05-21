@@ -40,6 +40,7 @@
 - [GET /api/analytics/hash-sizes](#get-apianalyticshash-sizes)
 - [GET /api/analytics/subpaths](#get-apianalyticssubpaths)
 - [GET /api/analytics/subpath-detail](#get-apianalyticssubpath-detail)
+- [GET /api/scope-stats](#get-apiscope-stats)
 - [GET /api/resolve-hops](#get-apiresolve-hops)
 - [GET /api/traces/:hash](#get-apitraceshash)
 - [GET /api/config/theme](#get-apiconfigtheme)
@@ -308,7 +309,8 @@ Paginated node list with filtering.
       "hash_size":     number | null,    // latest hash size (1–3 bytes)
       "hash_size_inconsistent": boolean, // true if flip-flopping
       "hash_sizes_seen": [number] | undefined, // present only if >1 unique size seen
-      "last_heard":    string (ISO) | undefined // from in-memory packets or path relay
+      "last_heard":    string (ISO) | undefined, // from in-memory packets or path relay
+      "default_scope": string | null | undefined // Most recently observed transport scope for this node. null = never observed transport-scoped, "" = observed scoped but no configured region matched, "#name" = matched region. Only present when ingestor has applied the nodes_default_scope_v1 migration.
     }
   ],
   "total":  number,                      // total matching count (before pagination)
@@ -1452,6 +1454,65 @@ Detailed stats for a specific subpath.
     { "name": string, "count": number }
   ]
 }
+```
+
+---
+
+## GET /api/scope-stats
+
+Scope-based packet statistics over a time window. Requires ingestor `scope_name_v1` migration to have run.
+
+### Query Parameters
+
+| Param    | Type   | Default | Description                                    |
+|----------|--------|---------|------------------------------------------------|
+| `window` | string | `24h`   | Time window: `1h`, `24h`, `7d`                |
+
+### Response `200`
+
+```jsonc
+{
+  "window":    string,               // echoed window ("1h", "24h", or "7d")
+  "summary": {
+    "transportTotal": number,        // scoped + unscoped transport-route packets
+    "scoped":         number,        // Code1 ≠ 0000 (named + unknown regions)
+    "unscoped":       number,        // transport-route with Code1 = 0000
+    "unknownScope":   number         // scoped but no configured region matched (subset of scoped)
+  },
+  "byRegion": [
+    { "name": string, "count": number }  // region name and packet count
+  ],
+  "timeSeries": [
+    { "t": string (ISO), "scoped": number, "unscoped": number }  // bucket timestamps and counts
+  ]
+}
+```
+
+**Notes:**
+- `transportTotal` = `scoped` + `unscoped` (only route_type 0 or 3 packets)
+- `scoped` = packets with Code1 ≠ 0000
+- `unscoped` = transport-route packets with Code1 = 0000
+- `unknownScope` = scoped packets that did not match any configured region name
+- Time-series bucket size depends on window:
+  - `1h` window → 5-minute buckets
+  - `24h` window → 1-hour buckets
+  - `7d` window → 6-hour buckets
+- Cached 30 seconds
+
+> **Note:** On deployments with pre-existing data, `unscoped` will be inflated until the async startup backfill completes, because transport-route rows inserted before the `scope_name_v1` migration ran have `scope_name = NULL` and are indistinguishable from Code1=0000 rows. The backfill goroutine populates them at startup but may take several minutes on large databases.
+
+### Response `400`
+
+```json
+{ "error": "window must be 1h, 24h, or 7d" }
+```
+
+### Response `500` Internal Server Error
+
+`scope_name` column does not exist (ingestor has not run migrations yet):
+
+```json
+{ "error": "scope_name column not present — run ingestor to apply migrations" }
 ```
 
 ---
