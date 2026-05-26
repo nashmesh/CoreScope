@@ -188,17 +188,30 @@ async function run() {
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('nav, .navbar, .nav, [class*="nav"]');
     const themeBefore = await page.$eval('html', el => el.getAttribute('data-theme'));
-    // Find toggle button
-    const allButtons = await page.$$('button');
+
+    // The toggle may be a <label#darkModeToggle> wrapping a checkbox (new toggle-switch
+    // design) or a <button#darkModeToggle> (legacy button design). Try the checkbox path
+    // first, then fall back to the old button scan.
     let toggled = false;
-    for (const b of allButtons) {
-      const text = await b.textContent();
-      if (text.includes('\u2600') || text.includes('\ud83c\udf19') || text.includes('\ud83c\udf11') || text.includes('\ud83c\udf15')) {
-        await b.click();
-        toggled = true;
-        break;
+
+    // New toggle-switch: click the label or directly set the checkbox
+    const toggleLabel = await page.$('#darkModeToggle');
+    if (toggleLabel) {
+      await toggleLabel.click();
+      toggled = true;
+    } else {
+      // Legacy fallback: scan buttons for sun/moon emoji
+      const allButtons = await page.$$('button');
+      for (const b of allButtons) {
+        const text = await b.textContent();
+        if (text.includes('\u2600') || text.includes('\ud83c\udf19') || text.includes('\ud83c\udf11') || text.includes('\ud83c\udf15')) {
+          await b.click();
+          toggled = true;
+          break;
+        }
       }
     }
+
     assert(toggled, 'Could not find dark mode toggle button');
     await page.waitForFunction(
       (before) => document.documentElement.getAttribute('data-theme') !== before,
@@ -206,6 +219,23 @@ async function run() {
     );
     const themeAfter = await page.$eval('html', el => el.getAttribute('data-theme'));
     assert(themeBefore !== themeAfter, `Theme didn't change: before=${themeBefore}, after=${themeAfter}`);
+
+    // PR #893 follow-up: tighten — if the new toggle-switch is present, verify
+    // (a) the checkbox is present and behaves as role="switch", and
+    // (b) the chosen theme persists across a full reload (localStorage path).
+    const checkbox = await page.$('#darkModeCheckbox');
+    if (checkbox) {
+      const role = await checkbox.evaluate(el => el.getAttribute('role'));
+      assert(role === 'switch', `Expected role="switch" on #darkModeCheckbox, got "${role}"`);
+      const checkedNow = await checkbox.evaluate(el => el.checked);
+      assert(checkedNow === (themeAfter === 'dark'),
+        `Checkbox state out of sync: checked=${checkedNow}, theme=${themeAfter}`);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('#darkModeToggle');
+      const themePersisted = await page.$eval('html', el => el.getAttribute('data-theme'));
+      assert(themePersisted === themeAfter,
+        `Theme did not persist across reload: was=${themeAfter}, after-reload=${themePersisted}`);
+    }
   });
 
   // Test: Stats bar shows version/commit badge

@@ -178,6 +178,9 @@
   --bg-secondary: var(--surface-2);
   --text-secondary: var(--text-muted);
   --bg: var(--surface);
+  /* PR #893: --shadow used by .theme-toggle thumb shadow; define in :root for
+   * light theme. Dark theme override is set in both dark-mode blocks below. */
+  --shadow: rgba(0,0,0,0.3);
   --trace-ghost-color: #94a3b8;
 
   /* #1128: documented z-index scale. Use these custom props for any new
@@ -226,6 +229,7 @@
     --input-bg: #1e1e34;
     --selected-bg: #1e3a5f;
     --hover-bg: rgba(255,255,255, 0.06);
+    --shadow: rgba(0,0,0,0.5);
     --trace-ghost-color: #94a3b8;
     --section-bg: #1e1e34;
   }
@@ -256,6 +260,7 @@
   --input-bg: #1e1e34;
   --selected-bg: #1e3a5f;
   --hover-bg: rgba(255,255,255, 0.06);
+  --shadow: rgba(0,0,0,0.5);
   --trace-ghost-color: #94a3b8;
   --section-bg: #1e1e34;
 }
@@ -618,6 +623,69 @@ input[type="week"] {
   min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
 }
 .nav-btn:hover { background: var(--nav-bg2); color: var(--nav-text); }
+
+/* === Theme Toggle Switch === */
+.theme-toggle {
+  display: inline-flex; align-items: center; cursor: pointer;
+  padding: 0; margin: 0; border: none; background: none;
+  min-width: 44px; min-height: 44px; justify-content: center;
+}
+.theme-toggle input[type="checkbox"] {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+.theme-toggle-track {
+  position: relative; width: 46px; height: 24px;
+  background: var(--border); border-radius: 12px;
+  transition: background 0.2s ease; display: flex; align-items: center;
+  border: 1px solid var(--border);
+}
+.theme-toggle input:checked ~ .theme-toggle-track {
+  background: var(--accent);
+}
+/* PR #893 follow-up: keyboard focus indicator. The native checkbox is visually
+ * hidden, so we draw the ring on the track sibling when the checkbox is
+ * :focus-visible. Matches the global focus-ring style above. */
+.theme-toggle input:focus-visible ~ .theme-toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.theme-toggle-thumb {
+  position: absolute; left: 3px; width: 18px; height: 18px;
+  background: var(--nav-text); border-radius: 50%;
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: transform 0.2s ease;
+  z-index: 1;
+}
+.theme-toggle input:checked ~ .theme-toggle-track .theme-toggle-thumb {
+  transform: translateX(22px);
+}
+.theme-toggle-icon {
+  position: absolute; font-size: 10px; line-height: 1;
+  top: 50%; transform: translateY(-50%);
+  pointer-events: none; user-select: none;
+  transition: opacity 0.2s ease;
+}
+.theme-toggle-sun { right: 4px; opacity: 1; }
+.theme-toggle-moon { left: 4px; opacity: 0; }
+.theme-toggle input:checked ~ .theme-toggle-track .theme-toggle-sun { opacity: 0; }
+.theme-toggle input:checked ~ .theme-toggle-track .theme-toggle-moon { opacity: 1; }
+/* PR #893 follow-up: respect prefers-reduced-motion — disable the slide/fade
+ * animation so the thumb snaps to position. */
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle-track,
+  .theme-toggle-thumb,
+  .theme-toggle-icon { transition: none; }
+}
+/* PR #893 follow-up: Windows High Contrast / forced-colors mode — the track
+ * background and thumb shadow get flattened to system colors, so explicitly
+ * keep a system-colored border on track and thumb to stay visible. */
+@media (forced-colors: active) {
+  .theme-toggle-track { border: 1px solid CanvasText; background: Canvas; }
+  .theme-toggle-thumb { background: CanvasText; box-shadow: none; }
+  .theme-toggle input:focus-visible ~ .theme-toggle-track {
+    outline: 2px solid Highlight;
+  }
+}
 /* === Nav Stats === */
 .nav-stats {
   display: flex; gap: 12px; align-items: center; font-size: 12px; color: var(--nav-text-muted);

@@ -1000,10 +1000,11 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // --- Dark Mode ---
   const darkToggle = document.getElementById('darkModeToggle');
+  const darkCheckbox = document.getElementById('darkModeCheckbox');
   const savedTheme = localStorage.getItem('meshcore-theme');
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    darkToggle.textContent = theme === 'dark' ? '🌙' : '☀️';
+    if (darkCheckbox) darkCheckbox.checked = theme === 'dark';
     localStorage.setItem('meshcore-theme', theme);
     // Re-apply user theme CSS vars for the correct mode (light/dark)
     reapplyUserThemeVars(theme === 'dark');
@@ -1051,9 +1052,26 @@ window.addEventListener('DOMContentLoaded', () => {
   } else {
     applyTheme('light');
   }
-  darkToggle.addEventListener('click', () => {
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    applyTheme(isDark ? 'light' : 'dark');
+  if (darkCheckbox) {
+    darkCheckbox.addEventListener('change', () => {
+      applyTheme(darkCheckbox.checked ? 'dark' : 'light');
+    });
+  } else {
+    // Fallback for button-style toggle (upstream compatibility)
+    darkToggle.addEventListener('click', () => {
+      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      applyTheme(isDark ? 'light' : 'dark');
+    });
+  }
+  // PR #893 follow-up: cross-tab sync — when another tab toggles theme,
+  // mirror it here without re-persisting (avoid loop). Matches the pattern
+  // used by the cb-presets storage listener below.
+  window.addEventListener('storage', function (ev) {
+    if (!ev || ev.key !== 'meshcore-theme' || !ev.newValue) return;
+    if (ev.newValue !== 'dark' && ev.newValue !== 'light') return;
+    document.documentElement.setAttribute('data-theme', ev.newValue);
+    if (darkCheckbox) darkCheckbox.checked = ev.newValue === 'dark';
+    try { reapplyUserThemeVars(ev.newValue === 'dark'); } catch (_) {}
   });
 
   // --- #1361 Colorblind preset bootstrap & cross-tab sync ---
