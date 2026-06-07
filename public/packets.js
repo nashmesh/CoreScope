@@ -257,12 +257,34 @@
   // (multiple SlideOver opens reuse the same token; only paired with a
   // matching release on close).
   let scrollLockToken = null;
+  // #1616: open state is now tracked by a flag instead of panel.hidden.
+  // The architectural close path DETACHES panel + backdrop from the DOM
+  // (removeChild) — there is no "focused-but-hidden" intermediate state
+  // for Chromium-headless to race against. See close() below.
+  let panelOpen = false;
+  // #1616: list of pending one-shot MutationObservers (per-close-invocation)
+  // waiting for a row to re-attach so we can land focus on the new instance.
+  // Tracked so a follow-up close()/open() can disconnect any stragglers.
+  let pendingFocusObservers = [];
+
+  function disconnectFocusObservers() {
+    for (var i = 0; i < pendingFocusObservers.length; i++) {
+      try { pendingFocusObservers[i].disconnect(); } catch (_) {}
+    }
+    pendingFocusObservers = [];
+  }
 
   function ensureNodes() {
     if (panel && backdrop) return;
     backdrop = document.createElement('div');
     backdrop.className = 'slide-over-backdrop';
+    // #1616: state is data-state="open|closed"; closed nodes are DETACHED
+    // from the DOM in close() so panel.hidden never has to be true while
+    // anything inside (or the panel itself) holds focus. We keep
+    // backdrop.hidden as a defensive fallback for the brief window after
+    // ensureNodes() runs before the first open() attaches them.
     backdrop.hidden = true;
+    backdrop.setAttribute('data-state', 'closed');
     // Backdrop is decorative — assistive tech should not announce it.
     backdrop.setAttribute('aria-hidden', 'true');
     backdrop.addEventListener('click', function () { close(); });
@@ -277,6 +299,7 @@
     // is the actual title rendered into the panel.
     panel.setAttribute('aria-labelledby', 'slideOverTitle');
     panel.hidden = true;
+    panel.setAttribute('data-state', 'closed');
     panel.tabIndex = -1;
     panel.innerHTML =
       '<div class="slide-over-header">' +
@@ -315,8 +338,10 @@
         try { first.focus(); } catch {}
       }
     });
-    document.body.appendChild(backdrop);
-    document.body.appendChild(panel);
+    // #1616: do NOT attach panel + backdrop to <body> on ensureNodes().
+    // They are appended in open() and removed in close() so the closed
+    // state is "not in the DOM" — Chromium-headless cannot land focus on
+    // something that isn't there.
 
     // Single Escape handler shared across all uses.
     document.addEventListener('keydown', function (e) {
@@ -352,7 +377,10 @@
   }
 
   function isOpen() {
-    return !!(panel && !panel.hidden);
+    // #1616: open state is the panelOpen flag, NOT (!panel.hidden).
+    // When closed the panel is DETACHED from <body>, so a `.hidden`
+    // check on a node nothing roots to <body> is meaningless.
+    return panelOpen;
   }
 
   function open(opts) {
@@ -365,6 +393,10 @@
     // prior close() can detect that a newer open has happened and skip
     // its stale focus-restore.
     openSeq++;
+    // #1616: a fresh open() invalidates any pending focus-observers
+    // from a recent close() — disconnect them so they can't land a
+    // stale focus on row A after row B has opened.
+    disconnectFocusObservers();
     closeCb = typeof opts.onClose === 'function' ? opts.onClose : null;
     // If the caller passes restoreFocus(), it owns lookup at close-time —
     // useful when the caller re-renders the row table (which would detach
@@ -382,8 +414,16 @@
     title.textContent = opts.title || 'Detail';
     content = panel.querySelector('.slide-over-content');
     content.innerHTML = '';
+    // #1616: ATTACH panel + backdrop now. They were removed (or never
+    // appended) by the prior close(). Order matters — backdrop first so
+    // it sits beneath the panel in source/paint order.
+    if (backdrop.parentNode !== document.body) document.body.appendChild(backdrop);
+    if (panel.parentNode !== document.body) document.body.appendChild(panel);
     backdrop.hidden = false;
     panel.hidden = false;
+    backdrop.setAttribute('data-state', 'open');
+    panel.setAttribute('data-state', 'open');
+    panelOpen = true;
     // Focus the close button so Esc/Enter works without an extra tab.
     const x = panel.querySelector('.slide-over-close');
     if (x) try { x.focus(); } catch {}
@@ -391,9 +431,7 @@
   }
 
   function close() {
-    if (!panel || panel.hidden) return;
-    panel.hidden = true;
-    if (backdrop) backdrop.hidden = true;
+    if (!panel || !panelOpen) return;
     // #1168 Munger #3: release the ref-counted scroll-lock token.
     if (scrollLockToken != null) {
       window.__scrollLock.release(scrollLockToken);
@@ -401,63 +439,140 @@
     }
     const cb = closeCb;
     closeCb = null;
-    if (content) content.innerHTML = '';
-    // Restore focus to whatever opened us (typically the table row), so
-    // keyboard users don't get dumped at the top of the document.
-    let toFocus = prevFocus;
     const resolver = prevFocusResolver;
+    let toFocus = prevFocus;
     prevFocus = null;
     prevFocusResolver = null;
-    // #1168 Munger #1: capture the open-sequence at close-time. If a NEW
-    // open() happens before our deferred rAF fires, openSeq will have
-    // advanced past this value and the stale rAF must no-op (otherwise
-    // it would steal focus back to row A's originating row AFTER row B
-    // is open — clobbering B's focus).
     const seqAtClose = openSeq;
+
+    // Fire the user's onClose BEFORE we touch focus. Callers typically
+    // re-render the originating table inside cb() (e.g. clearing the
+    // selected row state), which detaches the originating <tr>; we
+    // intentionally re-look-up via the resolver below.
     if (cb) try { cb(); } catch {}
-    // Resolver runs AFTER cb (cb may re-render the table and reattach the row).
+
+    // Resolve the focus target by DATA-VALUE LOOKUP AT RESTORE TIME.
+    // #1616: no captured-element-ref path — if cb() re-rendered the
+    // tbody, the captured prevFocus is now an orphaned node detached
+    // from the document, and Chromium-headless will silently swallow
+    // a .focus() call on it (activeElement falls back to <body>).
     if (resolver) {
       try {
         const resolved = resolver();
         if (resolved) toFocus = resolved;
-      } catch {}
+      } catch (_) {}
     }
-    if (toFocus && typeof toFocus.focus === 'function' && document.body.contains(toFocus)) {
-      // Defer to next microtask + rAF so the focus call lands AFTER any
-      // event-handler bookkeeping (e.g. an Escape keydown chain that would
-      // otherwise see focus snap back to <body> as the key event unwinds).
-      const tryFocus = function () {
-        // Munger #1: bail if a newer open() has happened since close-time.
-        if (openSeq !== seqAtClose) return;
-        let t = toFocus;
-        if (resolver) {
-          try {
-            const fresh = resolver();
-            if (fresh) t = fresh;
-          } catch (_) {}
-        }
 
-        // MINOR fix: don't steal focus if the user already focused another input
-        if (document.activeElement && 
-            document.activeElement !== document.body && 
-            document.activeElement !== t && 
-            !panel.contains(document.activeElement)) {
+    // #1616 (architectural): SYNCHRONOUSLY focus the target row BEFORE
+    // the panel/backdrop are detached. This eliminates the
+    // focused-but-hidden intermediate state Chromium-headless reasons
+    // about non-deterministically. If activeElement is inside the panel
+    // when the panel detaches, focus drops to <body>; landing focus on
+    // the row first means the detach is a no-op for the active element.
+    // The deferred microtask + rAF + observer chain below handles the
+    // case where cb() queued an async re-render that detaches this row.
+    if (toFocus && typeof toFocus.focus === 'function' && document.body.contains(toFocus)) {
+      try { toFocus.focus({ preventScroll: true }); } catch (_) {}
+    }
+
+    // DETACH panel + backdrop. After this point, there is no "panel
+    // node sitting hidden in the document tree" for Chromium to race
+    // a stale blur against.
+    panelOpen = false;
+    panel.setAttribute('data-state', 'closed');
+    backdrop.setAttribute('data-state', 'closed');
+    if (content) content.innerHTML = '';
+    panel.hidden = true;
+    backdrop.hidden = true;
+    if (panel.parentNode) panel.parentNode.removeChild(panel);
+    if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+
+    // If sync focus landed: schedule a microtask re-check. The
+    // caller's cb() may have queued an ASYNC re-render (microtask
+    // or rAF) that detaches the row AFTER our sync focus() — in that
+    // case activeElement falls to <body> AFTER this function returns,
+    // and we need a second-pass focus restore. queueMicrotask() runs
+    // AFTER any Promise.resolve().then(...) the caller queued from
+    // inside cb() (FIFO microtask queue), so re-resolving here picks
+    // up the NEW row instance.
+    if (!resolver) {
+      // No resolver = no second-pass capability; best-effort done.
+      return;
+    }
+
+    // Always run the deferred re-check pass, even if sync focus
+    // appeared to land — it may be on a soon-to-be-detached orphan.
+    function deferredRecheck() {
+      // Stale guard — newer open() bumped openSeq; bail.
+      if (openSeq !== seqAtClose) return;
+      // If focus already landed on something non-body that matches
+      // the resolver, we're done.
+      let fresh = null;
+      try { fresh = resolver(); } catch (_) {}
+      if (fresh && document.body.contains(fresh)) {
+        if (document.activeElement === fresh) return;
+        try { fresh.focus({ preventScroll: true }); } catch (_) {}
+        if (document.activeElement === fresh) return;
+      }
+      // Still not landed. Attach a one-shot MutationObserver rooted
+      // at document.body — broader than the prior tbody-rooted
+      // observer (which fails when the tbody itself is innerHTML-
+      // swapped), still bounded by a short timeout below.
+      attachBodyObserver();
+    }
+
+    function attachBodyObserver() {
+      const obs = new MutationObserver(function () {
+        if (openSeq !== seqAtClose) {
+          obs.disconnect();
+          const idx = pendingFocusObservers.indexOf(obs);
+          if (idx >= 0) pendingFocusObservers.splice(idx, 1);
           return;
         }
-
-        if (t && document.body.contains(t)) {
-          try { t.focus({ preventScroll: true }); } catch (_) {}
+        let target = null;
+        try { target = resolver(); } catch (_) {}
+        if (!target || !document.body.contains(target)) return;
+        try { target.focus({ preventScroll: true }); } catch (_) {}
+        if (document.activeElement === target) {
+          obs.disconnect();
+          const idx = pendingFocusObservers.indexOf(obs);
+          if (idx >= 0) pendingFocusObservers.splice(idx, 1);
         }
-      };
-
-      requestAnimationFrame(function () {
-        if (document.activeElement && panel.contains(document.activeElement)) {
-          try { document.activeElement.blur(); } catch (_) {}
-        }
-        tryFocus();
-        setTimeout(tryFocus, 10);
       });
+      // #1616 followup: root = document.body. The prior 'smart' tbody
+      // root logic broke when cb() replaced the entire tbody via
+      // innerHTML — the observer was watching a node that no longer
+      // received the mutation we cared about. document.body is broader
+      // but correctly catches the re-attachment in all known callsites
+      // (nodes/packets/observers all swap rows under tbody under body).
+      obs.observe(document.body, { childList: true, subtree: true });
+      pendingFocusObservers.push(obs);
+      // Tight timeout — 200ms is enough for any sync or microtask/rAF
+      // re-render to commit. Longer (e.g. the prior 2s) creates new
+      // races where the observer fires AFTER a subsequent open() and
+      // steals focus from row B back to row A.
+      setTimeout(function () {
+        obs.disconnect();
+        const idx = pendingFocusObservers.indexOf(obs);
+        if (idx >= 0) pendingFocusObservers.splice(idx, 1);
+      }, 200);
     }
+
+    // Step 1: microtask — runs AFTER cb's Promise.resolve().then(...)
+    // re-renders, BEFORE next animation frame. Catches the common
+    // async-render path.
+    queueMicrotask(function () {
+      if (openSeq !== seqAtClose) return;
+      let fresh = null;
+      try { fresh = resolver(); } catch (_) {}
+      if (fresh && document.body.contains(fresh)
+          && document.activeElement !== fresh) {
+        try { fresh.focus({ preventScroll: true }); } catch (_) {}
+      }
+      // Step 2: rAF — runs after layout commits. Catches re-renders
+      // that wait on rAF or that resolve only after style/layout work.
+      requestAnimationFrame(deferredRecheck);
+    });
   }
 
   // If the viewport grows past the breakpoint while open, close the slide-over
