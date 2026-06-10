@@ -116,6 +116,7 @@ window.ObserversSummary = (function () {
   let wsHandler = null;
   let refreshTimer = null;
   let regionChangeHandler = null;
+  let _obsSortCtl = null; // #1641 r1 finding #6: tracked TableSort controller for destroy-before-reinit
 
   function init(app) {
     app.innerHTML = `
@@ -181,6 +182,10 @@ window.ObserversSummary = (function () {
     refreshTimer = null;
     if (regionChangeHandler) RegionFilter.offChange(regionChangeHandler);
     regionChangeHandler = null;
+    if (_obsSortCtl && typeof _obsSortCtl.destroy === 'function') {
+      try { _obsSortCtl.destroy(); } catch (_) { /* ignore */ }
+    }
+    _obsSortCtl = null;
     observers = [];
     obsSkewMap = {};
   }
@@ -289,36 +294,71 @@ window.ObserversSummary = (function () {
       <div class="obs-table-scroll table-fluid-wrap"><table class="data-table obs-table" id="obsTable">
         <caption class="sr-only">Observer status and statistics</caption>
         <thead><tr>
-          <th scope="col" data-priority="1">Status</th><th scope="col" data-priority="1">Name</th><th scope="col" data-priority="3">Region</th><th scope="col" data-priority="2">Last Status</th><th scope="col" data-priority="2">Last Packet</th>
-          <th scope="col" data-priority="3">Packet Health</th><th scope="col" data-priority="4">Total Packets</th><th scope="col" data-priority="3">Packets/Hour</th><th scope="col" data-priority="4">Clock Offset</th><th scope="col" data-priority="4">Uptime</th>
+          <th scope="col" data-priority="1" data-sort-key="status" data-type="numeric">Status</th><th scope="col" data-priority="1" data-sort-key="name">Name</th><th scope="col" data-priority="3" data-sort-key="region">Region</th><th scope="col" data-priority="2" data-sort-key="last_seen" data-type="numeric">Last Status</th><th scope="col" data-priority="2" data-sort-key="last_packet_at" data-type="numeric">Last Packet</th>
+          <th scope="col" data-priority="3" data-sort-key="packet_health" data-type="numeric">Packet Health</th><th scope="col" data-priority="4" data-sort-key="packet_count" data-type="numeric">Total Packets</th><th scope="col" data-priority="3" data-sort-key="packets_hour" data-type="numeric">Packets/Hour</th><th scope="col" data-priority="4" data-sort-key="clock_offset" data-type="numeric">Clock Offset</th><th scope="col" data-priority="4" data-sort-key="uptime" data-type="numeric">Uptime</th>
         </tr></thead>
         <tbody>${filtered.map(o => {
           const h = healthStatus(o.last_seen);
           const shape = h.cls === 'health-green' ? '●' : h.cls === 'health-yellow' ? '▲' : '✕';
+          // TableSort reads NaN-sortable raw values from each cell's
+          // data-value attr (table-sort.js comparators.numeric/time sort
+          // NaN last). Empty string ⇒ NaN ⇒ missing-sorts-last.
+          const _lastSeenMs  = o.last_seen      ? new Date(o.last_seen).getTime()      : '';
+          const _lastPktMs   = o.last_packet_at ? new Date(o.last_packet_at).getTime() : '';
+          const _firstSeenMs = o.first_seen     ? new Date(o.first_seen).getTime()     : 0;
+          const _uptimeMs    = _firstSeenMs ? (Date.now() - _firstSeenMs) : '';
+          const _skewSec = (obsSkewMap[o.id] && obsSkewMap[o.id].samples)
+            ? Math.abs(Number(obsSkewMap[o.id].offsetSec) || 0)
+            : '';
+          // #1641 r1 finding #1: Packet Health sortable rank must differ
+          // from Last Packet — use the health bucket, not the timestamp.
+          // Higher rank = healthier; matches the desc-by-default semantics.
+          const _healthRank = h.cls === 'health-green' ? 2 : (h.cls === 'health-yellow' ? 1 : 0);
+          const _packetCount = (o.packet_count != null) ? o.packet_count : '';
+          const _packetsHour = (o.packetsLastHour != null) ? o.packetsLastHour : '';
           return `<tr style="cursor:pointer" tabindex="0" role="row" data-action="navigate" data-value="#/observers/${encodeURIComponent(o.id)}" onclick="location.hash='#/observers/${encodeURIComponent(o.id)}'">
-            <td><span class="health-dot ${h.cls}" title="${h.label}">${shape}</span> ${h.label}</td>
-            <td class="mono">${escapeHtml(o.name || o.id)}${window.ObserversNaiveChip.render(o)}${o.can_relay === false ? ' <span class="badge-listener" title="Firmware reported repeat:off — listener-only; excluded from path-hop disambiguator (issue #1290)">listener</span>' : (o.can_relay === true ? ' <span class="badge-repeater" title="Firmware reported repeat:on — eligible as a path hop">repeater</span>' : '')}</td>
-            <td>${o.iata ? `<span class="badge-region">${o.iata}</span>` : '—'}</td>
-            <td>${timeAgo(o.last_seen)}</td>
-            <td>${o.last_packet_at ? timeAgo(o.last_packet_at) : '<span class="text-muted">—</span>'}</td>
-            <td>${packetBadge(o)}</td>
-            <td>${(o.packet_count || 0).toLocaleString()}</td>
-            <td>${sparkBar(o.packetsLastHour || 0, maxPktsHr)}</td>
-            <td>${(function() {
+            <td data-value="${_healthRank}"><span class="health-dot ${h.cls}" title="${h.label}">${shape}</span> ${h.label}</td>
+            <td data-testid="obs-cell-name" data-value="${escapeHtml(String(o.name || o.id))}" class="mono">${escapeHtml(o.name || o.id)}${window.ObserversNaiveChip.render(o)}${o.can_relay === false ? ' <span class="badge-listener" title="Firmware reported repeat:off — listener-only; excluded from path-hop disambiguator (issue #1290)">listener</span>' : (o.can_relay === true ? ' <span class="badge-repeater" title="Firmware reported repeat:on — eligible as a path hop">repeater</span>' : '')}</td>
+            <td data-value="${escapeHtml(o.iata || '')}">${o.iata ? `<span class="badge-region">${o.iata}</span>` : '—'}</td>
+            <td data-value="${_lastSeenMs}">${timeAgo(o.last_seen)}</td>
+            <td data-testid="obs-cell-last-packet" data-value="${_lastPktMs}">${o.last_packet_at ? timeAgo(o.last_packet_at) : '<span class="text-muted">—</span>'}</td>
+            <td data-value="${_healthRank}">${packetBadge(o)}</td>
+            <td data-testid="obs-cell-packet-count" data-value="${_packetCount}">${(o.packet_count || 0).toLocaleString()}</td>
+            <td data-value="${_packetsHour}">${sparkBar(o.packetsLastHour || 0, maxPktsHr)}</td>
+            <td data-value="${_skewSec}">${(function() {
               var sk = obsSkewMap[o.id];
               if (!sk || sk.samples == null || sk.samples === 0) return '<span class="text-muted">—</span>';
               var sev = observerSkewSeverity(sk.offsetSec);
               return renderSkewBadge(sev, sk.offsetSec) + ' <span class="text-muted" title="Computed from ' + sk.samples + ' multi-observer packets. Positive = observer ahead of consensus.">(' + sk.samples + ')</span>';
             })()}</td>
-            <td>${uptimeStr(o.first_seen)}</td>
+            <td data-value="${_uptimeMs}">${uptimeStr(o.first_seen)}</td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>`;
     makeColumnsResizable('#obsTable', 'meshcore-obs-col-widths');
+    const obsTbl = document.getElementById('obsTable');
     // #1056: fluid columns + +N hidden pill
-    if (window.TableResponsive) {
-      var _obsTbl = document.getElementById('obsTable');
-      if (_obsTbl) window.TableResponsive.register(_obsTbl);
+    if (obsTbl && window.TableResponsive) {
+      window.TableResponsive.register(obsTbl);
+    }
+    // #1639 — wire TableSort AFTER tbody is in the DOM (avoid the #679 init
+    // race). Re-init on every render so the controller binds to the new
+    // header instance, and persist sort state under meshcore-observers-sort.
+    if (obsTbl && window.TableSort) {
+      // #1641 r1 finding #6: destroy the prior controller before re-init so
+      // we don't leak header click listeners across the 30s render cycle.
+      if (_obsSortCtl && typeof _obsSortCtl.destroy === 'function') {
+        try { _obsSortCtl.destroy(); } catch (_) { /* ignore */ }
+      }
+      _obsSortCtl = TableSort.init(obsTbl, {
+        defaultColumn: 'last_seen',
+        defaultDirection: 'desc',
+        storageKey: 'meshcore-observers-sort'
+      });
+    } else if (obsTbl && !window.TableSort) {
+      // #1641 r1 finding #14: surface bundler/loading regressions instead of
+      // silently rendering an unsortable table.
+      console.warn('[observers] window.TableSort missing — table will not be sortable');
     }
   }
 
