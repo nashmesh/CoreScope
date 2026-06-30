@@ -1,6 +1,14 @@
 (function() {
   'use strict';
 
+  // #1799 PR #1804 r1 item 9 (adv6): payload-labels.js is loaded
+  // synchronously before this script in index.html. Missing module is
+  // a packaging bug — crash loud rather than render with stale inline
+  // fallback data.
+  if (!window.PayloadLabels) {
+    throw new Error('live.js: window.PayloadLabels missing — payload-labels.js failed to load');
+  }
+
   // getParsedPath / getParsedDecoded are in shared packet-helpers.js (loaded before this file)
   var getParsedPath = window.getParsedPath;
   var getParsedDecoded = window.getParsedDecoded;
@@ -152,14 +160,38 @@
 
   const TYPE_COLORS = window.TYPE_COLORS || {
     ADVERT: '#22c55e', GRP_TXT: '#3b82f6', TXT_MSG: '#f59e0b', ACK: '#6b7280',
-    REQUEST: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6',
+    REQ: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6',
     ANON_REQ: '#f43f5e', GRP_DATA: '#8b5cf6', MULTIPART: '#0d9488',
     CONTROL: '#b45309', RAW_CUSTOM: '#c026d3'
   };
 
+  // #1804 r1 item 7 (adv3): legend builder extracted from the live-overlay
+  // template IIFE so it is testable in isolation. See
+  // test-live-legend-helper.js. Emits one <li data-enum="<ENUM>">…</li>
+  // per entry in ORDER, each row formatted as `SHORT — LONG`.
+  //
+  // #1804 r1 item 9 (adv6): inline fallback dropped. The top-of-file
+  // guard already crashed if PayloadLabels was missing, so by the time
+  // we reach here the canonical map is guaranteed to be there.
+  function buildLegendHtml(PL) {
+    var src = (PL && PL.api) ? PL.api : PL;
+    var enums = (PL && PL.enums) ? PL.enums : PL;
+    var order = src.ORDER;
+    return order.map(function (k) {
+      var e = enums[k];
+      if (!e) return '';
+      var color = TYPE_COLORS[k] || '#888';
+      var label = e.short + ' \u2014 ' + e.long;
+      return '<li data-enum="' + k + '"><span class="live-dot" style="background:' + color + '" aria-hidden="true"></span> ' + label + '</li>';
+    }).join('');
+  }
+  // Expose for tests + downstream consumers. The unit test reads this
+  // via vm; in-page consumers can pull it off window for debugging.
+  if (typeof window !== 'undefined') { window.buildLegendHtml = buildLegendHtml; }
+
   const PAYLOAD_ICONS = {
     ADVERT: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-broadcast"/></svg>', GRP_TXT: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-chat-circle"/></svg>', TXT_MSG: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-envelope"/></svg>', ACK: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-check"/></svg>',
-    REQUEST: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-question"/></svg>', RESPONSE: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-envelope"/></svg>', TRACE: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg>', PATH: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-path"/></svg>'
+    REQ: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-question"/></svg>', RESPONSE: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-envelope"/></svg>', TRACE: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg>', PATH: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-path"/></svg>'
   };
 
   /* ---- Panel Corner Positioning (#608 M0) ---- */
@@ -1167,19 +1199,7 @@
           <div class="panel-content">
           <h3 class="legend-title">PACKET TYPES</h3>
           <ul class="legend-list">
-            <li><span class="live-dot" style="background:${TYPE_COLORS.ADVERT}" aria-hidden="true"></span> Advert — Node advertisement</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.GRP_TXT}" aria-hidden="true"></span> Message — Group text</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.TXT_MSG}" aria-hidden="true"></span> Direct — Direct message</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.REQUEST}" aria-hidden="true"></span> Request — Data request</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.RESPONSE}" aria-hidden="true"></span> Response — Data response</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.TRACE}" aria-hidden="true"></span> Trace — Route trace</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.PATH}" aria-hidden="true"></span> Path — Path discovery</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.ANON_REQ}" aria-hidden="true"></span> Anon Req — Anonymous request</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.GRP_DATA}" aria-hidden="true"></span> Group Data — Group datagram</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.MULTIPART}" aria-hidden="true"></span> Multipart — Multi-fragment payload</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.CONTROL}" aria-hidden="true"></span> Control — Control plane</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.RAW_CUSTOM}" aria-hidden="true"></span> Raw Custom — Application-defined payload</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.ACK}" aria-hidden="true"></span> Ack / Other — Acknowledgment or unknown type</li>
+            ${buildLegendHtml(window.PayloadLabels || null)}
           </ul>
           <h3 class="legend-title" style="margin-top:8px">NODE ROLES</h3>
           <ul class="legend-list" id="roleLegendList"></ul>

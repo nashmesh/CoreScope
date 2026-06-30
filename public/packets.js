@@ -623,6 +623,16 @@
   let packets = [];
   let hashIndex = new Map(); // hash → packet group for O(1) dedup
 
+  // #1799 PR #1804 r1 item 9 (adv6): payload-labels.js is loaded
+  // synchronously before this script in index.html. A missing module
+  // is a packaging bug, not a runtime degradation — fail loud.
+  if (typeof window !== 'undefined' && !window.PayloadLabels) {
+    throw new Error('packets.js: window.PayloadLabels missing — payload-labels.js failed to load');
+  }
+  const SHORT_BY_ID = window.PayloadLabels.api
+    ? window.PayloadLabels.api.SHORT_BY_ID
+    : window.PayloadLabels.SHORT_BY_ID;
+
   // Resolve observer_id to friendly name from loaded observers list
   function obsName(id) {
     if (!id) return '—';
@@ -717,7 +727,7 @@
   // already built (decouples observer fetch from row render).
   let _rebuildObserverMenu = null;
   let regionMap = {};
-  const TYPE_NAMES = { 0:'Request', 1:'Response', 2:'Direct Msg', 3:'ACK', 4:'Advert', 5:'Channel Msg', 6:'Group Data', 7:'Anon Req', 8:'Path', 9:'Trace', 10:'Multipart', 11:'Control', 15:'Raw Custom' };
+  const TYPE_NAMES = SHORT_BY_ID;
   function typeName(t) { return TYPE_NAMES[t] ?? `Type ${t}`; }
   const isMobile = window.innerWidth <= 1024;
   const PACKET_LIMIT = isMobile ? 1000 : 50000;
@@ -1745,7 +1755,7 @@
     // --- Type multi-select ---
     const typeMenu = document.getElementById('typeMenu');
     const typeTrigger = document.getElementById('typeTrigger');
-    const typeMap = {0:'Request',1:'Response',2:'Direct Msg',3:'ACK',4:'Advert',5:'Channel Msg',6:'Group Data',7:'Anon Req',8:'Path',9:'Trace',10:'Multipart',11:'Control',15:'Raw Custom'};
+    const typeMap = SHORT_BY_ID;
     const selectedTypes = new Set(filters.type ? String(filters.type).split(',') : []);
     function buildTypeMenu() {
       const allChecked = selectedTypes.size === 0;

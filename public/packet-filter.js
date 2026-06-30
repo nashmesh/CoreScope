@@ -4,11 +4,26 @@
 (function() {
   'use strict';
 
-  // Local copies of type maps (also available as window globals from app.js)
-  // Standard firmware payload type names (canonical)
-  var FW_PAYLOAD_TYPES = { 0: 'REQ', 1: 'RESPONSE', 2: 'TXT_MSG', 3: 'ACK', 4: 'ADVERT', 5: 'GRP_TXT', 6: 'GRP_DATA', 7: 'ANON_REQ', 8: 'PATH', 9: 'TRACE', 10: 'MULTIPART', 11: 'CONTROL', 15: 'RAW_CUSTOM' };
-  // Aliases: display names → firmware names (for user convenience)
-  var TYPE_ALIASES = { 'request': 'REQ', 'response': 'RESPONSE', 'direct msg': 'TXT_MSG', 'dm': 'TXT_MSG', 'ack': 'ACK', 'advert': 'ADVERT', 'channel msg': 'GRP_TXT', 'channel': 'GRP_TXT', 'group data': 'GRP_DATA', 'anon req': 'ANON_REQ', 'path': 'PATH', 'trace': 'TRACE', 'multipart': 'MULTIPART', 'control': 'CONTROL', 'raw': 'RAW_CUSTOM', 'custom': 'RAW_CUSTOM' };
+  // Canonical payload-label module is the single source of truth (#1799).
+  //
+  // #1799 PR #1804 r1 item 9 (adv6): inline fallbacks dropped. In the
+  // browser, payload-labels.js is loaded synchronously before this
+  // script in index.html — a missing module is a packaging bug that
+  // should crash loud, not silently mask itself as stale labels.
+  var _PL;
+  if (typeof window !== 'undefined') {
+    if (!window.PayloadLabels) {
+      throw new Error('packet-filter.js: window.PayloadLabels missing — payload-labels.js failed to load');
+    }
+    _PL = window.PayloadLabels;
+  } else {
+    _PL = require('./payload-labels.js');
+  }
+  // Prefer the .api namespace introduced in PR #1804 r1 item 8; legacy
+  // root-level properties remain as a fall-through for older callers.
+  var _src = _PL.api || _PL;
+  var FW_PAYLOAD_TYPES = _src.FW_PAYLOAD_TYPES;
+  var TYPE_ALIASES     = _src.TYPE_ALIASES;
   var ROUTE_TYPES = { 0: 'TRANSPORT_FLOOD', 1: 'FLOOD', 2: 'DIRECT', 3: 'TRANSPORT_DIRECT' };
   // Aliases: shorthand → canonical route name (issue #339)
   var ROUTE_ALIASES = { 't_flood': 'TRANSPORT_FLOOD', 't_direct': 'TRANSPORT_DIRECT' };
