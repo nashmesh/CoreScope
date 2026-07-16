@@ -97,6 +97,9 @@ func Apply(rw *sql.DB, logf Logger) error {
 	if err := ensureTransmissionsLastSeenColumn(rw, logf); err != nil {
 		return fmt.Errorf("ensure transmissions.last_seen: %w", err)
 	}
+	if err := ensureInfrastructureColumns(rw, logf); err != nil {
+		return fmt.Errorf("ensure infrastructure columns: %w", err)
+	}
 	return nil
 }
 
@@ -170,6 +173,13 @@ func AssertReady(ro *sql.DB) error {
 	// an explicit value; can_relay_seen=0 means leave the UI badge
 	// unset (unknown state).
 	mustCol("observers", "can_relay_seen")
+	// Infrastructure nodes (#infra): operator-curated flag marking
+	// well-placed community nodes (towers, mountain peaks). Written by
+	// scripts/set-infra.sh (admin CLI); server reads it to expose
+	// `infrastructure` on /api/nodes responses. On both tables so the
+	// flag survives MoveStaleNodes' `INSERT OR REPLACE ... SELECT *`.
+	mustCol("nodes", "infrastructure")
+	mustCol("inactive_nodes", "infrastructure")
 
 	if len(missing) > 0 {
 		return fmt.Errorf("schema not migrated by ingestor; restart ingestor first. missing: %s",
@@ -629,6 +639,39 @@ func ensureTransmissionsLastSeenColumn(rw *sql.DB, logf Logger) error {
 	// PREFLIGHT: async=true reason="CREATE INDEX on a single INTEGER column; SQLite scales linearly with row count (~5s for 1.9M rows on prod hardware) and we want the index live before cold-load reads"
 	if _, err := rw.Exec(`CREATE INDEX IF NOT EXISTS idx_tx_last_seen ON transmissions(last_seen)`); err != nil {
 		return fmt.Errorf("create idx_tx_last_seen: %w", err)
+	}
+	return nil
+}
+
+// ensureInfrastructureColumns adds the operator-curated `infrastructure`
+// flag to nodes + inactive_nodes. Infrastructure nodes are well-placed
+// community deployments (towers, mountain peaks) that anchor network
+// connectivity; the flag is set by an operator via scripts/set-infra.sh,
+// never by the ingest path (UpsertNode's ON CONFLICT touches only
+// name/role/lat/lon/last_seen, so the flag persists across adverts).
+// Added to BOTH tables in the same Apply pass so column order stays
+// aligned for MoveStaleNodes' `INSERT OR REPLACE INTO inactive_nodes
+// SELECT * FROM nodes` and the flag survives retention moves.
+func ensureInfrastructureColumns(rw *sql.DB, logf Logger) error {
+	if err := ensureMigrationsTable(rw); err != nil {
+		return err
+	}
+	for _, table := range []string{"nodes", "inactive_nodes"} {
+		has, err := TableHasColumn(rw, table, "infrastructure")
+		if err != nil {
+			return fmt.Errorf("inspect %s.infrastructure: %w", table, err)
+		}
+		if has {
+			continue
+		}
+		// PREFLIGHT: async=true reason="single-column ALTER ADD COLUMN with constant DEFAULT 0 — metadata-only schema update in SQLite, no row scan, O(1) at any scale"
+		if _, err := rw.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN infrastructure INTEGER NOT NULL DEFAULT 0`, table)); err != nil {
+			return fmt.Errorf("alter %s add infrastructure: %w", table, err)
+		}
+		logf("[dbschema] added infrastructure column to %s", table)
+	}
+	if _, err := rw.Exec(`INSERT OR IGNORE INTO _migrations (name) VALUES ('nodes_infrastructure_v1')`); err != nil {
+		return fmt.Errorf("record nodes_infrastructure_v1: %w", err)
 	}
 	return nil
 }

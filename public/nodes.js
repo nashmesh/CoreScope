@@ -82,6 +82,7 @@
   }
   let lastHeard = localStorage.getItem('meshcore-nodes-last-heard') || '';
   let statusFilter = localStorage.getItem('meshcore-nodes-status-filter') || 'all';
+  let infraOnly = localStorage.getItem('meshcore-nodes-infra-filter') === 'true';
   let wsHandler = null;
   let detailMap = null;
 
@@ -215,6 +216,9 @@
     // Returns HTML for: role badge, hash prefix badge, hash inconsistency link, status label
     const info = getStatusInfo(n);
     let html = `<span class="badge" style="${(window.aaBadgeStyle && window.aaBadgeStyle(roleColor)) || ('background:'+roleColor+';color:#fff')}">${n.role}</span>`;
+    if (window.isInfrastructureNode(n)) {
+      html += ` <span class="badge infra-badge" title="${window.INFRA_BADGE_TITLE}">INFRA</span>`;
+    }
     if (n.hash_size) {
       html += ` <span class="badge pubkey-prefix-badge">${n.public_key.slice(0, n.hash_size * 2).toUpperCase()}</span>`;
     }
@@ -1234,6 +1238,10 @@
           return getNodeStatus(role, lastMs) === statusFilter;
         });
       }
+      // Infrastructure-only filter (#infra)
+      if (infraOnly) {
+        filtered = filtered.filter(n => window.isInfrastructureNode(n));
+      }
       nodes = filtered;
 
       // Defensive filter: hide nodes with obviously corrupted data
@@ -1265,6 +1273,7 @@
       } else {
         renderLeft();
       }
+      renderInfraPanel();
     } catch (e) {
       console.error('Failed to load nodes:', e);
       const tbody = document.getElementById('nodesBody');
@@ -1273,6 +1282,88 @@
       // Always signal data-loaded — even on error — so E2E tests can proceed.
       var nodesContainer = document.getElementById('nodesLeft') || document.getElementById('nodesBody');
       if (nodesContainer) nodesContainer.setAttribute('data-loaded', 'true');
+    }
+  }
+
+  // ─── Infrastructure at-a-glance panel (#infra) ───
+  // Overview strip of operator-curated infrastructure nodes above the
+  // node table. Built entirely from the already-fetched /api/nodes bulk
+  // data (_allNodes) — no extra API calls. Hidden when the community
+  // hasn't marked any nodes. Stale nodes sort first: surfacing an infra
+  // outage is the point of the panel.
+  function renderInfraPanel() {
+    const el = document.getElementById('infraPanel');
+    if (!el) return;
+    const infraNodes = _allNodes.filter(n => window.isInfrastructureNode(n));
+    if (!infraNodes.length) { el.innerHTML = ''; return; }
+
+    const collapsed = localStorage.getItem('meshcore-infra-panel-collapsed') === 'true';
+    const withStatus = infraNodes.map(n => {
+      const t = n.last_heard || n.last_seen;
+      const lastMs = t ? new Date(t).getTime() : 0;
+      return { n, lastMs, status: getNodeStatus((n.role || 'companion').toLowerCase(), lastMs) };
+    });
+    withStatus.sort((a, b) => {
+      if (a.status !== b.status) return a.status === 'stale' ? -1 : 1;
+      return (a.n.name || '').localeCompare(b.n.name || '');
+    });
+    const activeCount = withStatus.filter(s => s.status === 'active').length;
+
+    const cards = withStatus.map(({ n, status }) => {
+      const roleColor = ROLE_COLORS[n.role] || '#6b7280';
+      const battery = (n.battery_mv != null) ? (n.battery_mv / 1000).toFixed(2) + 'V' : '—';
+      return `<div class="infra-card" role="button" tabindex="0" data-key="${n.public_key}" aria-label="${escapeHtml(n.name || '(unnamed)')} infrastructure node, ${status}">
+        <div class="infra-card-head">
+          <span class="infra-card-status ${status === 'active' ? 'infra-status-active' : 'infra-status-stale'}" title="${status}">●</span>
+          <strong>${escapeHtml(n.name || '(unnamed)')}</strong>
+        </div>
+        <div class="infra-card-meta">
+          <span class="badge" style="${(window.aaBadgeStyle && window.aaBadgeStyle(roleColor)) || ('background:' + roleColor + ';color:#fff')}">${n.role || '?'}</span>
+          <span title="Last heard">${renderNodeTimestampHtml(n.last_heard || n.last_seen)}</span>
+        </div>
+        <div class="infra-card-stats">
+          <span title="Battery"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-battery-high"/></svg> ${battery}</span>
+          <span title="Adverts"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-broadcast"/></svg> ${n.advert_count || 0}</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `<div class="infra-panel">
+      <button class="infra-panel-header" aria-expanded="${!collapsed}" aria-controls="infraCards">
+        <span class="badge infra-badge" title="${window.INFRA_BADGE_TITLE}">INFRA</span>
+        <strong>Infrastructure</strong>
+        <span class="infra-panel-summary">${activeCount}/${withStatus.length} active</span>
+        <svg class="ph-icon infra-panel-chevron" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#${collapsed ? 'ph-caret-down' : 'ph-caret-up'}"/></svg>
+      </button>
+      <div class="infra-cards" id="infraCards"${collapsed ? ' hidden' : ''}>${cards}</div>
+    </div>`;
+
+    // Bind delegated handlers ONCE per container element. renderInfraPanel
+    // re-runs on every loadNodes (incl. ws refreshes); re-adding listeners
+    // each time would stack duplicates on the persistent container — two
+    // header listeners toggle the collapse state twice (net no-op).
+    if (!el._infraHandlersBound) {
+      el._infraHandlersBound = true;
+      el.addEventListener('click', (e) => {
+        if (e.target.closest('.infra-panel-header')) {
+          const nowCollapsed = localStorage.getItem('meshcore-infra-panel-collapsed') === 'true';
+          localStorage.setItem('meshcore-infra-panel-collapsed', String(!nowCollapsed));
+          renderInfraPanel();
+          return;
+        }
+        const card = e.target.closest('.infra-card');
+        if (card) selectNode(card.dataset.key);
+      });
+      // Keyboard: cards are role=button divs and need explicit handling.
+      // The header is a real <button> — Enter/Space fire click natively,
+      // so it must NOT be handled here (would double-toggle).
+      el.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const card = e.target.closest('.infra-card');
+        if (!card) return;
+        e.preventDefault();
+        selectNode(card.dataset.key);
+      });
     }
   }
 
@@ -1292,6 +1383,7 @@
     if (!el) return;
 
     el.innerHTML = `
+      <div id="infraPanel"></div>
       <div class="nodes-tabs-bar">
         <div class="nodes-tabs" id="nodeTabs">
           ${TABS.map(t => `<button class="node-tab ${activeTab === t.key ? 'active' : ''}" data-tab="${t.key}">${t.label}</button>`).join('')}
@@ -1301,6 +1393,9 @@
             <button class="btn ${statusFilter==='all'?'active':''}" data-status="all">All</button>
             <button class="btn ${statusFilter==='active'?'active':''}" data-status="active">Active</button>
             <button class="btn ${statusFilter==='stale'?'active':''}" data-status="stale">Stale</button>
+          </div>
+          <div class="filter-group" id="nodeInfraFilter">
+            <button class="btn ${infraOnly?'active':''}" aria-pressed="${infraOnly}" title="${window.INFRA_BADGE_TITLE}">Infra</button>
           </div>
           <select id="nodeLastHeard" aria-label="Filter by last heard time">
             <option value="">Last Heard: Any</option>
@@ -1349,6 +1444,18 @@
         loadNodes();
       });
     });
+
+    // Infrastructure-only toggle (#infra)
+    const infraBtn = document.querySelector('#nodeInfraFilter .btn');
+    if (infraBtn) {
+      infraBtn.addEventListener('click', () => {
+        infraOnly = !infraOnly;
+        localStorage.setItem('meshcore-nodes-infra-filter', infraOnly);
+        infraBtn.classList.toggle('active', infraOnly);
+        infraBtn.setAttribute('aria-pressed', String(infraOnly));
+        loadNodes();
+      });
+    }
 
     // Initialize TableSort on nodes table (handles header clicks, indicators, persistence)
     // We use onSort callback to re-render rows (sorting is done at JS-array level in renderRows
@@ -1463,7 +1570,7 @@
       const cs = _fleetSkew && _fleetSkew[n.public_key];
       const skewBadgeHtml = cs && cs.severity && cs.severity !== 'ok' ? renderSkewBadge(cs.severity, window.currentSkewValue(cs), cs) : '';
       return `<tr data-key="${n.public_key}" data-action="select" data-value="${n.public_key}" tabindex="0" role="row" class="${selectedKey === n.public_key ? 'selected' : ''}${isClaimed ? ' claimed-row' : ''}">
-        <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-star-fill"/></svg></span> ' : ''}<strong>${escapeHtml(n.name || '(unnamed)')}</strong>${dupNameBadge(n.name, n.public_key, dupMap)}${skewBadgeHtml}</td>
+        <td>${favStar(n.public_key, 'node-fav')}${isClaimed ? '<span class="claimed-badge" title="My Mesh"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-star-fill"/></svg></span> ' : ''}<strong>${escapeHtml(n.name || '(unnamed)')}</strong>${window.isInfrastructureNode(n) ? ` <span class="badge infra-badge" style="font-size:9px" title="${window.INFRA_BADGE_TITLE}">INFRA</span>` : ''}${dupNameBadge(n.name, n.public_key, dupMap)}${skewBadgeHtml}</td>
         <td class="mono col-pubkey">${truncate(n.public_key, 16)}</td>
         <td><span class="badge" style="${(window.aaBadgeStyle && window.aaBadgeStyle(roleColor)) || ('background:'+roleColor+';color:#fff')}">${n.role}</span></td>
         <td style="font-family:var(--mono);font-size:12px">${n.default_scope ? escapeHtml(n.default_scope) : ''}</td>

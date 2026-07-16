@@ -4390,6 +4390,13 @@ th.sort-active { color: var(--accent, #60a5fa); }
   --mc-marker-stroke-width:   2;
   --mc-marker-stroke-opacity: 1;
 
+  /* Infrastructure nodes (#infra) — operator-curated flag accent.
+   * Wong orange: the remaining free slot in the colorblind-safe role
+   * palette above, so the infra ring/badge stays distinguishable from
+   * every role fill for CVD viewers. */
+  --mc-infra:      #E69F00;
+  --mc-infra-text: #1a1a1a;
+
   /* #1407 — per-role text colors paired with each --mc-role-X bg so
    * .mc-pill (and any badge using the var) hits WCAG 1.4.3 AA against
    * the active preset. Wong defaults all clear 4.5:1 with dark text;
@@ -4579,6 +4586,78 @@ body[data-cb-preset="achromat"] {
 .mc-mb-label.status-confirmed { border-left-color: var(--mc-mb-confirmed); }
 .mc-mb-label.status-suspected { border-left-color: var(--mc-mb-suspected); }
 .mc-mb-label.status-unknown   { border-left-color: var(--mc-mb-unknown);   }
+
+/* Infrastructure (#infra): ring around repeater hash-label markers.
+ * SVG shape markers get their ring drawn in makeMarkerIcon instead. */
+.mc-mb-label.mc-infra-label { box-shadow: 0 0 0 2px var(--mc-infra); }
+
+/* Infrastructure badge — nodes list, node detail, map popup. */
+.infra-badge {
+  background: var(--mc-infra);
+  color: var(--mc-infra-text);
+  cursor: help;
+}
+
+/* Infrastructure at-a-glance panel (#infra) — nodes page overview strip */
+.infra-panel {
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--mc-infra);
+  border-radius: 6px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+.infra-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.infra-panel-summary { color: var(--text-muted); font-size: 12px; }
+.infra-panel-chevron { margin-left: auto; }
+.infra-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+/* display:flex above would defeat the [hidden] attribute's UA rule
+ * (author styles always beat the UA sheet) — restate it explicitly. */
+.infra-cards[hidden] { display: none; }
+.infra-card {
+  flex: 1 1 200px;
+  max-width: 280px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font-size: 12px;
+}
+.infra-card:hover, .infra-card:focus-visible { border-color: var(--mc-infra); }
+.infra-card-head { display: flex; align-items: center; gap: 6px; }
+.infra-card-status { font-size: 10px; line-height: 1; }
+/* Stale is RED here (not the table's muted gray): a silent infra node
+ * is an outage signal, and surfacing outages is what the panel is for. */
+.infra-status-active { color: var(--status-green); }
+.infra-status-stale  { color: var(--status-red); }
+.infra-card-meta, .infra-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+@media (max-width: 640px) {
+  .infra-card { max-width: none; }
+}
 
 /* Forced-colors / Windows High Contrast — degrade gracefully (audit item 7). */
 @media (forced-colors: active) {

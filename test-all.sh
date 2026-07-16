@@ -61,6 +61,10 @@ node test-issue-1532-live-fullscreen.js
 node test-issue-1473-reserved-prefixes.js
 node test-issue-1473-prefix-generator.js
 
+# Infrastructure nodes (#infra) — badge/filter/panel frontend surface + set-infra.sh CLI
+node test-infrastructure-nodes.js
+sh scripts/test-set-infra.sh
+
 echo ""
 echo "═══════════════════════════════════════"
 echo "  All tests passed"

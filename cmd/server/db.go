@@ -31,6 +31,7 @@ type DB struct {
 	hasScopeName        bool   // transmissions.scope_name column exists (#899)
 	hasDefaultScope     bool   // nodes.default_scope column exists (#899)
 	hasMultibyteSupCols bool   // nodes/inactive_nodes have multibyte_sup/multibyte_evidence (#903)
+	hasInfrastructure   bool   // nodes.infrastructure column exists (operator-curated infra flag)
 	hasLastSeen         bool   // transmissions.last_seen column exists (#1690)
 
 	// Channel list cache (60s TTL) — avoids repeated GROUP BY scans (#762)
@@ -132,17 +133,23 @@ func (db *DB) detectSchema() {
 				db.hasDefaultScope = true
 			case "multibyte_sup":
 				db.hasMultibyteSupCols = true
+			case "infrastructure":
+				db.hasInfrastructure = true
 			}
 		}
 	}
 }
 
 // nodeSelectCols returns the SELECT column list for nodes queries.
-// When hasDefaultScope is true, default_scope is appended as the last column.
+// Optional columns (default_scope, infrastructure) are appended in a
+// fixed order that scanNodeRow mirrors.
 func (db *DB) nodeSelectCols() string {
 	cols := "public_key, name, role, lat, lon, last_seen, first_seen, advert_count, battery_mv, temperature_c, foreign_advert"
 	if db.hasDefaultScope {
 		cols += ", default_scope"
+	}
+	if db.hasInfrastructure {
+		cols += ", infrastructure"
 	}
 	return cols
 }
@@ -2221,8 +2228,8 @@ func scanPacketRow(rows *sql.Rows) map[string]interface{} {
 	}
 }
 
-// scanNodeRow scans a node row. When hasDefaultScope is true the SELECT must
-// include default_scope as the last column.
+// scanNodeRow scans a node row. Optional columns (default_scope,
+// infrastructure) must appear in the SELECT in nodeSelectCols' order.
 func (db *DB) scanNodeRow(rows *sql.Rows) map[string]interface{} {
 	var pk string
 	var name, role, lastSeen, firstSeen sql.NullString
@@ -2232,10 +2239,14 @@ func (db *DB) scanNodeRow(rows *sql.Rows) map[string]interface{} {
 	var temperatureC sql.NullFloat64
 	var foreign sql.NullInt64
 	var defaultScope sql.NullString
+	var infrastructure sql.NullInt64
 
 	scanArgs := []interface{}{&pk, &name, &role, &lat, &lon, &lastSeen, &firstSeen, &advertCount, &batteryMv, &temperatureC, &foreign}
 	if db.hasDefaultScope {
 		scanArgs = append(scanArgs, &defaultScope)
+	}
+	if db.hasInfrastructure {
+		scanArgs = append(scanArgs, &infrastructure)
 	}
 	if err := rows.Scan(scanArgs...); err != nil {
 		return nil
@@ -2253,6 +2264,9 @@ func (db *DB) scanNodeRow(rows *sql.Rows) map[string]interface{} {
 		"hash_size":              nil,
 		"hash_size_inconsistent": false,
 		"foreign":                foreign.Valid && foreign.Int64 != 0,
+		// Stable API shape: false when the column doesn't exist yet
+		// (pre-migration DB) so clients never see a missing field.
+		"infrastructure": infrastructure.Valid && infrastructure.Int64 != 0,
 	}
 	if batteryMv.Valid {
 		m["battery_mv"] = int(batteryMv.Int64)
