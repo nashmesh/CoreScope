@@ -163,9 +163,16 @@
     value: _roleOverrides, writable: false, enumerable: false, configurable: false
   });
 
+  // PR #1804 r1 item 4 (tufte4+adv5): ACK and UNKNOWN deliberately share
+  // the neutral #6b7280 swatch (both render as the "Other" bucket). The
+  // legend now identifies rows via data-enum="<ENUM>", so the reverse
+  // color→enum lookup is no longer needed for tests or for the runtime
+  // — the prior insertion-order workaround is gone, restoring natural
+  // declaration order.
   window.TYPE_COLORS = {
-    ADVERT: '#22c55e', GRP_TXT: '#3b82f6', GRP_DATA: '#8b5cf6', TXT_MSG: '#f59e0b', ACK: '#6b7280',
-    REQUEST: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6',
+    ADVERT: '#22c55e', GRP_TXT: '#3b82f6', GRP_DATA: '#8b5cf6', TXT_MSG: '#f59e0b',
+    ACK: '#6b7280',
+    REQ: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6',
     ANON_REQ: '#f43f5e', MULTIPART: '#0d9488', CONTROL: '#b45309', RAW_CUSTOM: '#c026d3',
     UNKNOWN: '#6b7280'
   };
@@ -173,7 +180,7 @@
   // Badge CSS class name mapping
   const TYPE_BADGE_MAP = {
     ADVERT: 'advert', GRP_TXT: 'grp-txt', GRP_DATA: 'grp-data', TXT_MSG: 'txt-msg', ACK: 'ack',
-    REQUEST: 'req', RESPONSE: 'response', TRACE: 'trace', PATH: 'path',
+    REQ: 'req', RESPONSE: 'response', TRACE: 'trace', PATH: 'path',
     ANON_REQ: 'anon-req', MULTIPART: 'multipart', CONTROL: 'control', RAW_CUSTOM: 'raw-custom',
     UNKNOWN: 'unknown'
   };
@@ -544,6 +551,22 @@
 
   // ─── Fetch server overrides ───
   window.MeshConfigReady = fetch('/api/config/client').then(function (r) { return r.json(); }).then(function (cfg) {
+    window.MC_CLIENT_RX_COVERAGE = cfg.clientRxCoverage === true;
+    // Coverage is opt-in: the nav link is NOT in static HTML (so the default-off
+    // nav matches upstream and the nav-overflow tests). Inject it after Analytics
+    // only when enabled, then nudge applyNavPriority (it re-runs on 'resize').
+    if (window.MC_CLIENT_RX_COVERAGE && !document.querySelector('.nav-links [data-route="rx-coverage"]')) {
+      var navAnchor = document.querySelector('.nav-links [data-route="analytics"]');
+      if (navAnchor) {
+        var covLink = document.createElement('a');
+        covLink.href = '#/rx-coverage';
+        covLink.className = 'nav-link';
+        covLink.setAttribute('data-route', 'rx-coverage');
+        covLink.innerHTML = '<svg class="ph-icon" aria-hidden="true" focusable="false"><use href="/icons/phosphor-sprite.svg#ph-broadcast"></use></svg> Coverage';
+        navAnchor.insertAdjacentElement('afterend', covLink);
+        window.dispatchEvent(new Event('resize'));
+      }
+    }
     if (cfg.roles) {
       if (cfg.roles.colors) {
         // #1407 — ROLE_COLORS is now a live getter; merge into the override map.

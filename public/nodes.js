@@ -192,7 +192,7 @@
     const lastHeardMs = lastHeardTime ? new Date(lastHeardTime).getTime() : 0;
     const status = getNodeStatus(role, lastHeardMs);
     const statusTooltip = getStatusTooltip(role, status);
-    const statusLabel = status === 'active' ? '<span style="color:var(--status-green)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> Active' : '<span style="color:var(--text-muted)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> Stale';
+    const statusLabel = status === 'active' ? '<span style="color:var(--status-green-text)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> Active' : '<span style="color:var(--text-muted)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> Stale';
     const statusAge = lastHeardMs ? (Date.now() - lastHeardMs) : Infinity;
 
     let explanation = '';
@@ -294,7 +294,7 @@
     // HIGH when EITHER the legacy heuristic clears OR ≥3 unambiguous-equivalent
     // sightings have accumulated (weighted ≥ 3).
     if ((entry.score >= 0.5 && entry.count >= 3) || weighted >= 3) {
-      return { icon: '<span style="color:var(--status-green)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span>', label: 'HIGH', cls: 'confidence-high' };
+      return { icon: '<span style="color:var(--status-green-text)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span>', label: 'HIGH', cls: 'confidence-high' };
     }
     return { icon: '<span style="color:var(--status-yellow)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span>', label: 'MEDIUM', cls: 'confidence-medium' };
   }
@@ -621,6 +621,7 @@
             <button class="btn-primary" id="copyShortUrlBtn" title="Short URL using an 8-char pubkey prefix — easier to send over the mesh (issue #772)" style="flex:0 0 auto;font-size:12px;padding:4px 10px"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-broadcast"/></svg> Copy short URL</button>
             <a href="#/nodes/${encodeURIComponent(n.public_key)}/analytics" class="btn-primary" style="flex:0 0 auto;text-decoration:none;font-size:12px;padding:4px 10px"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-chart-bar"/></svg> Analytics</a>
             <a href="#/nodes/${encodeURIComponent(n.public_key)}/reach" class="btn-primary" style="flex:0 0 auto;text-decoration:none;font-size:12px;padding:4px 10px"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-broadcast"/></svg> Reach</a>
+            <a href="#/observers/${encodeURIComponent(n.public_key.toUpperCase())}" class="btn-primary" title="View this pubkey as an observer" style="flex:0 0 auto;text-decoration:none;font-size:12px;padding:4px 10px"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-eye"/></svg> Observer →</a>
           </div>
         </div>
 
@@ -635,7 +636,7 @@
         <table class="node-stats-table" id="node-stats">
           <tr><td>Status</td><td><span title="${si.statusTooltip}">${statusLabel}</span> <span style="font-size:11px;color:var(--text-muted);margin-left:4px">${statusExplanation}</span></td></tr>
           <tr><td>Last Heard</td><td>${renderNodeTimestampHtml(lastHeard || n.last_seen)}</td></tr>
-          ${(n.role === 'repeater' || n.role === 'room') ? `<tr><td title="Last time this repeater appeared as a relay hop in a non-advert packet observed by the network. Distinct from 'Last Heard' (which counts the repeater's own adverts). See issue #662.">Last Relayed</td><td>${n.last_relayed ? renderNodeTimestampHtml(n.last_relayed) + ' ' + (n.relay_active ? '<span style="color:var(--status-green);font-size:11px"><span style="color:var(--status-green)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> actively relaying</span>' : '<span style="color:var(--status-yellow);font-size:11px"><span style="color:var(--status-yellow)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> alive (idle)</span>') : '<span style="color:var(--text-muted)">never observed as relay hop</span> <span style="color:var(--status-yellow);font-size:11px"><span style="color:var(--status-yellow)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> alive (idle)</span>'}${(n.relay_count_1h != null || n.relay_count_24h != null) ? ` <span style="color:var(--text-muted);font-size:11px;margin-left:4px">(${n.relay_count_1h || 0} relays/hr, ${n.relay_count_24h || 0} relays/24h)</span>` : ''}</td></tr>` : ''}
+          ${(n.role === 'repeater' || n.role === 'room') ? `<tr><td title="Last time this repeater appeared as a relay hop in a non-advert packet observed by the network. Distinct from 'Last Heard' (which counts the repeater's own adverts). See issue #662.">Last Relayed</td><td>${n.last_relayed ? renderNodeTimestampHtml(n.last_relayed) + ' ' + (n.relay_active ? '<span style="color:var(--status-green-text);font-size:11px"><span style="color:var(--status-green-text)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> actively relaying</span>' : '<span style="color:var(--status-yellow);font-size:11px"><span style="color:var(--status-yellow)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> alive (idle)</span>') : '<span style="color:var(--text-muted)">never observed as relay hop</span> <span style="color:var(--status-yellow);font-size:11px"><span style="color:var(--status-yellow)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span> alive (idle)</span>'}${(n.relay_count_1h != null || n.relay_count_24h != null) ? ` <span style="color:var(--text-muted);font-size:11px;margin-left:4px">(${n.relay_count_1h || 0} relays/hr, ${n.relay_count_24h || 0} relays/24h)</span>` : ''}</td></tr>` : ''}
           ${(n.role === 'repeater' || n.role === 'room') && (n.traffic_share_score != null || n.usefulness_score != null) ? (() => {
             // #1456: prefer the new traffic_share_score field; fall back
             // to legacy usefulness_score for graceful degradation
@@ -676,6 +677,7 @@
             const btooltip = "Normalized betweenness centrality (0..1). How often this node sits on the shortest path between other pairs of nodes in the affinity graph. 1.0 = the most structurally critical node on the mesh. High Bridge + low Traffic share = a quiet but irreplaceable chokepoint.";
             return `<tr id="row-bridge-score" data-bridge-score="${b.toFixed(4)}"><td title="${btooltip}">Bridge score <span style="color:var(--text-muted);cursor:help" aria-label="help">ⓘ</span></td><td><span style="display:inline-block;vertical-align:middle;width:80px;height:8px;background:var(--bg-secondary,#333);border-radius:4px;overflow:hidden;margin-right:6px"><span style="display:block;width:${bbarWidth}%;height:100%;background:${bcolor}"></span></span><span style="color:${bcolor};font-weight:600">${bpct}%</span> <span style="color:var(--text-muted);font-size:11px;margin-left:4px">${blabel}</span></td></tr>`;
           })() : ''}
+          ${(n.role === 'repeater' || n.role === 'room') && Array.isArray(n.transported_scopes) && n.transported_scopes.length ? `<tr id="row-transported-scopes"><td title="Distinct region scopes (transmissions.scope_name) of all non-advert packets in which this repeater appears as a path hop. Shows which regions' traffic this repeater has carried (#1751).">Transported scopes</td><td><span style="display:inline-flex;flex-wrap:wrap;gap:3px;vertical-align:middle">${n.transported_scopes.map(sc => '<span class="badge">' + escapeHtml(String(sc)) + '</span>').join('')}</span></td></tr>` : ''}
           <tr><td>First Seen</td><td>${renderNodeTimestampHtml(n.first_seen)}</td></tr>
           <tr><td>Total Packets</td><td>${stats.totalTransmissions || stats.totalPackets || n.advert_count || 0}${stats.totalObservations && stats.totalObservations !== (stats.totalTransmissions || stats.totalPackets) ? ' <span class="text-muted" style="font-size:0.85em">(seen ' + stats.totalObservations + '×)</span>' : ''}</td></tr>
           <tr><td>Packets Today</td><td>${stats.packetsToday || 0}</td></tr>
@@ -773,7 +775,7 @@
       }
 
       // Copy URL
-      const nodeUrl = location.origin + '#/nodes/' + encodeURIComponent(n.public_key);
+      const nodeUrl = location.origin + '/#/nodes/' + encodeURIComponent(n.public_key);
       document.getElementById('copyUrlBtn')?.addEventListener('click', () => {
         const btn = document.getElementById('copyUrlBtn');
         window.copyToClipboard(nodeUrl, () => {
@@ -784,7 +786,7 @@
 
       // Copy short URL — issue #772. Uses an 8-char pubkey prefix; the
       // backend resolves it to the canonical pubkey when unambiguous.
-      const shortUrl = location.origin + '#/nodes/' + n.public_key.slice(0, 8);
+      const shortUrl = location.origin + '/#/nodes/' + n.public_key.slice(0, 8);
       document.getElementById('copyShortUrlBtn')?.addEventListener('click', () => {
         const btn = document.getElementById('copyShortUrlBtn');
         window.copyToClipboard(shortUrl, () => {
@@ -812,7 +814,7 @@
           const qr = qrcode(0, 'M');
           qr.addData(meshcoreUrl);
           qr.make();
-          qrFullEl.innerHTML = qr.createSvgTag(3, 0);
+          qrFullEl.innerHTML = qr.createSvgTag(3, 12);
           const svg = qrFullEl.querySelector('svg');
           if (svg) { svg.style.display = 'block'; svg.style.margin = '0 auto'; }
         } catch {}
@@ -876,7 +878,7 @@
                 html += '<div style="border:1px solid var(--border);border-radius:4px;padding:8px;margin-bottom:6px;font-size:12px">';
                 html += '<b>Prefix: ' + escapeHtml(r.prefix) + '</b> → ';
                 if (r.method === 'auto-resolved') {
-                  html += '<span style="color:var(--status-green)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-check-circle"/></svg> ' + escapeHtml(r.chosenName || r.chosen || '?') + '</span>';
+                  html += '<span style="color:var(--status-green-text)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-check-circle"/></svg> ' + escapeHtml(r.chosenName || r.chosen || '?') + '</span>';
                   html += ' (Jaccard=' + r.chosenJaccard.toFixed(2) + ', ratio=' + ((isFinite(r.ratio) && r.ratio < 100) ? r.ratio.toFixed(1) + '×' : '∞') + ')';
                 } else {
                   html += '<span style="color:var(--status-yellow)"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Ambiguous</span>';
@@ -1687,7 +1689,7 @@
     const observers = h.observers || [];
     const recent = h.recentPackets || [];
     const hasLoc = n.lat != null && n.lon != null;
-    const nodeUrl = location.origin + '#/nodes/' + encodeURIComponent(n.public_key);
+    const nodeUrl = location.origin + '/#/nodes/' + encodeURIComponent(n.public_key);
 
     // Status calculation via shared helper
     const lastHeard = stats.lastHeard;
@@ -1810,7 +1812,7 @@
         qr.addData(meshcoreUrl);
         qr.make();
         const isOverlay = !!qrEl.closest('.node-map-qr-overlay');
-        qrEl.innerHTML = qr.createSvgTag(3, 0);
+        qrEl.innerHTML = qr.createSvgTag(3, 12);
         const svg = qrEl.querySelector('svg');
         if (svg) {
           svg.style.display = 'block'; svg.style.margin = '0 auto';

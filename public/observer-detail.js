@@ -20,27 +20,22 @@ window.ObserverDetailNaiveBanner = {
     var dir = sec < 0 ? 'behind' : 'ahead of';
     var count = Number(obs.clock_skew_count_24h || 0);
     var lastAt = obs.clock_last_naive_at ? new Date(obs.clock_last_naive_at).toLocaleString() : '';
-    // Bright warning card. Plain HTML (no framework). Inline styles so it
-    // shows even on pages without the latest CSS bust.
-    return '<div class="obs-clock-naive-banner" role="alert" style="'
-      + 'background:rgba(255,193,7,0.12);border:1px solid #ffc107;border-left-width:4px;'
-      + 'padding:12px 16px;margin-bottom:16px;border-radius:6px;font-size:14px;line-height:1.45">'
-      + '<div style="font-weight:600;font-size:15px;margin-bottom:6px">'
-      + '\u26A0\uFE0F Naive observer clock — timing is being clamped'
-      + '</div>'
-      + '<div>This observer is emitting <strong>zone-less local-time</strong> timestamps '
-      + 'and its clock is currently <strong>' + magnitude + ' ' + dir + ' UTC</strong>.'
-      + (count > 0 ? ' We have recorded <strong>' + count + '</strong> clamp event'
-          + (count === 1 ? '' : 's') + ' in the last 24 hours' : '')
-      + (lastAt ? ' (most recent: ' + lastAt + ')' : '') + '.'
-      + ' Per-packet rxTime for this observer is being collapsed to ingest time, '
-      + 'which muddies propagation-delay analytics.'
-      + '</div>'
-      + '<div style="margin-top:8px"><strong>Fix:</strong> set the observer host clock to <strong>UTC</strong>, '
-      + 'OR have the observer script emit <strong>Z-suffixed</strong> '
+    // Neutral inline notice (toned down from the original alert card per #1478 follow-up).
+    // clock_naive / clamped kept in code comments only — not shown to operators.
+    return '<div class="obs-clock-naive-banner" role="note" style="'
+      + 'padding:6px 10px;margin-bottom:12px;font-size:13px;line-height:1.4;'
+      + 'color:var(--text-muted, #666)">'
+      + 'Observer clock is currently <strong>' + magnitude + ' ' + dir + ' UTC</strong>; '
+      + 'rxTime is normalized to ingest time.'
+      + (count > 0 ? ' (' + count + ' occurrence' + (count === 1 ? '' : 's') + ' in 24 h)' : '')
+      + ' <details style="display:inline;font-size:12px"><summary>How to fix</summary>'
+      + '<span style="display:block;margin-top:4px">'
+      + 'Set the observer host clock to UTC, or emit Z-suffixed '
       + '(<code>datetime.now(timezone.utc).isoformat()</code>) or offset-aware timestamps. '
-      + 'The chip and this banner clear automatically once 24 hours pass without a new clamp event.'
-      + '</div>'
+      + 'If your observer build is older, upgrading to the latest release usually fixes this — '
+      + 'newer builds emit offset-aware timestamps by default. '
+      + 'This notice clears automatically after 24 hours with no new events.'
+      + '</span></details>'
       + '</div>';
   },
 };
@@ -86,6 +81,7 @@ window.ObserverDetailNaiveBanner = {
         <div class="page-header" style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
           <a href="#/observers" class="btn-icon" title="Back to Observers" aria-label="Back">←</a>
           <h2 style="margin:0" id="obsTitle">Observer Detail</h2>
+          <a href="#/nodes/${encodeURIComponent(currentId.toLowerCase())}" class="btn-secondary" title="View this pubkey as a node" style="text-decoration:none;font-size:12px;padding:4px 10px">View node detail →</a>
           <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <span class="compare-with-group">
               <label class="sr-only" for="obsCompareWithPicker">Compare with another observer</label>

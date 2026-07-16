@@ -1874,6 +1874,29 @@ func TestConfigRegionsWithCustomRegions(t *testing.T) {
 	}
 }
 
+func TestIataCoordsIncludesNapaAndSonoma(t *testing.T) {
+	// Issue #1786: observers tagged APC (Napa County) or STS (Charles M.
+	// Schulz–Sonoma County) rendered without lat/lon and did not pin on the map
+	// because iataCoords lacked entries for them.
+	cases := []struct {
+		code     string
+		lat, lon float64
+	}{
+		{"APC", 38.2132, -122.2807},
+		{"STS", 38.509, -122.8128},
+	}
+	for _, c := range cases {
+		coord, ok := iataCoords[c.code]
+		if !ok {
+			t.Errorf("iataCoords missing %q", c.code)
+			continue
+		}
+		if coord.Lat != c.lat || coord.Lon != c.lon {
+			t.Errorf("%s = {%v, %v}, want {%v, %v}", c.code, coord.Lat, coord.Lon, c.lat, c.lon)
+		}
+	}
+}
+
 func TestConfigMapWithCustomDefaults(t *testing.T) {
 	db := setupTestDB(t)
 	seedTestData(t, db)
@@ -4157,6 +4180,11 @@ func TestHandleScopeStats(t *testing.T) {
 	}
 	srv.db.hasScopeName = true
 
+	// Clear seed transmissions so this test isolates scope-stats math.
+	if _, err := srv.db.conn.Exec(`DELETE FROM transmissions`); err != nil {
+		t.Fatalf("clear transmissions: %v", err)
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	// 2 scoped (known region), 1 unknown-scoped (empty string), 1 unscoped (NULL)
 	rows := []struct {
@@ -4168,6 +4196,8 @@ func TestHandleScopeStats(t *testing.T) {
 		{"h2", "#belgium", 3},
 		{"h3", "", 0},      // transport-scoped, no region match
 		{"h4_null", "", 0}, // will be inserted with NULL scope_name
+		{"h5_nt1", "", 1},  // non-transport FLOOD — inherently unscoped (#1838)
+		{"h6_nt2", "", 2},  // non-transport DIRECT — inherently unscoped (#1838)
 	}
 	for i, r := range rows {
 		var scopeArg interface{} = r.scope
@@ -4202,8 +4232,8 @@ func TestHandleScopeStats(t *testing.T) {
 	if resp.Summary.Scoped != 3 { // 2 named + 1 unknown-scoped (empty string, non-NULL)
 		t.Errorf("scoped = %d, want 3", resp.Summary.Scoped)
 	}
-	if resp.Summary.Unscoped != 1 {
-		t.Errorf("unscoped = %d, want 1", resp.Summary.Unscoped)
+	if resp.Summary.Unscoped != 3 { // 1 transport-null + 2 non-transport routes 1,2 (#1838)
+		t.Errorf("unscoped = %d, want 3", resp.Summary.Unscoped)
 	}
 	if resp.Summary.UnknownScope != 1 {
 		t.Errorf("unknownScope = %d, want 1", resp.Summary.UnknownScope)
@@ -4716,5 +4746,117 @@ func TestListLimitsConfigurable(t *testing.T) {
 
 	if limit != 1234 {
 		t.Errorf("expected limit to be capped at 1234, got %v", limit)
+	}
+}
+
+// TestPostPacketPersistsV3Schema is the round-trip regression for #1196.
+// POST /api/packets must write the observation row using the v3 schema
+// (observer_idx INTEGER, timestamp INTEGER) and surface insert errors.
+// The pre-fix handler writes v2 columns (observer_id, observer_name,
+// RFC3339 timestamp) and silently swallows the obs insert error.
+func TestPostPacketPersistsV3Schema(t *testing.T) {
+	const apiKey = "test-secret-key-strong-enough"
+	srv, router := setupTestServerWithAPIKey(t, apiKey)
+
+	// FLOOD/ADVERT hex (header 0x11, path byte 0x00, payload bytes).
+	// Mirrors TestDecodePacket_FloodHasNoCodes.
+	const rawHex = "110011223344556677889900AABBCCDD"
+	bodyJSON := `{"hex":"` + rawHex + `","observer":"obs1","snr":5.5,"rssi":-72}`
+
+	req := httptest.NewRequest("POST", "/api/packets",
+		bytes.NewReader([]byte(bodyJSON)))
+	req.Header.Set("X-API-Key", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /api/packets: expected 200, got %d (body: %s)",
+			w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	idF, _ := resp["id"].(float64)
+	txID := int64(idF)
+	if txID <= 0 {
+		t.Fatalf("expected transmission id > 0, got %v (body: %s)",
+			resp["id"], w.Body.String())
+	}
+
+	// Resolve expected observer_idx from the seeded observers table.
+	var wantIdx int64
+	if err := srv.db.conn.QueryRow(
+		"SELECT rowid FROM observers WHERE id = ?", "obs1",
+	).Scan(&wantIdx); err != nil {
+		t.Fatalf("lookup observer rowid: %v", err)
+	}
+
+	// Assert the observation row was written with v3 columns.
+	var (
+		gotIdx int64
+		gotTS  int64
+	)
+	err := srv.db.conn.QueryRow(
+		"SELECT observer_idx, timestamp FROM observations WHERE transmission_id = ?",
+		txID,
+	).Scan(&gotIdx, &gotTS)
+	if err != nil {
+		t.Fatalf("observation row missing for tx %d: %v (handler swallowed insert error?)", txID, err)
+	}
+	if gotIdx != wantIdx {
+		t.Errorf("observer_idx: want %d, got %d", wantIdx, gotIdx)
+	}
+	nowSec := time.Now().Unix()
+	if gotTS < nowSec-60 || gotTS > nowSec+60 {
+		t.Errorf("timestamp: want unix int near %d, got %d", nowSec, gotTS)
+	}
+}
+
+// TestConfigThemeTypeColorsLegacyRequestKey verifies the REQUEST→REQ rename
+// (#1799 PR #1804 r1 item 6) doesn't break operators whose config.json still
+// carries the legacy `typeColors.REQUEST` key. The GET response must:
+//   - accept a config that supplies "REQUEST" and have that value win the
+//     mergeMap precedence for the corresponding logical slot
+//   - emit BOTH "REQ" and "REQUEST" in typeColors for ≥1 release cycle so
+//     downstream consumers reading the legacy key keep working
+func TestConfigThemeTypeColorsLegacyRequestKey(t *testing.T) {
+	db := setupTestDB(t)
+	seedTestData(t, db)
+	cfg := &Config{
+		Port: 3000,
+		TypeColors: map[string]interface{}{
+			// Operator's stale config — legacy key only.
+			"REQUEST": "#deadbe",
+		},
+	}
+	hub := NewHub()
+	srv := NewServer(db, cfg, hub)
+	router := mux.NewRouter()
+	srv.RegisterRoutes(router)
+
+	req := httptest.NewRequest("GET", "/api/config/theme", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	tc, ok := body["typeColors"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("typeColors missing or wrong shape: %v", body["typeColors"])
+	}
+	// Legacy operator override must propagate to the canonical REQ slot.
+	if tc["REQ"] != "#deadbe" {
+		t.Errorf("typeColors.REQ: want #deadbe (from legacy REQUEST override), got %v", tc["REQ"])
+	}
+	// Back-compat emission: REQUEST also present, equal to REQ.
+	if tc["REQUEST"] != "#deadbe" {
+		t.Errorf("typeColors.REQUEST: want #deadbe (back-compat dual-emit), got %v", tc["REQUEST"])
 	}
 }

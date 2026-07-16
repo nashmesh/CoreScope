@@ -38,8 +38,10 @@ func TestReleaseFastPathWorkflowExists(t *testing.T) {
 		t.Errorf("release-fast-path.yml: missing required push.tags trigger 'v[0-9]+.[0-9]+.[0-9]+'")
 	}
 
-	// Permissions: needs packages:write to re-tag in GHCR, contents:read for checkout.
-	for _, perm := range []string{"packages: write", "contents: read"} {
+	// Permissions: needs packages:write to re-tag in GHCR, contents:read for
+	// checkout, and actions:write so the fallback `gh workflow run deploy.yml`
+	// dispatch is allowed (issue #1702 — fallback returned 403 without it).
+	for _, perm := range []string{"packages: write", "contents: read", "actions: write"} {
 		if !strings.Contains(src, perm) {
 			t.Errorf("release-fast-path.yml: missing required permission %q", perm)
 		}
@@ -49,10 +51,13 @@ func TestReleaseFastPathWorkflowExists(t *testing.T) {
 	//   - re-tag path: install crane, read :edge revision label, apply new tags
 	//   - fallback path: dispatch the existing deploy.yml pipeline
 	required := []string{
-		"imjasonh/setup-crane",                  // crane install action
-		"org.opencontainers.image.revision",     // label inspected on :edge
-		"ghcr.io/kpa-clawbot/corescope",         // image ref
-		":edge",                                 // source tag we copy from
+		"imjasonh/setup-crane",              // crane install action
+		"org.opencontainers.image.revision", // label inspected on :edge
+		// image ref — parametrized to the owning account so forks publish
+		// under their own namespace (GITHUB_TOKEN can't push elsewhere);
+		// shell-lowercased because ghcr requires lowercase image names.
+		`IMAGE="ghcr.io/$(echo "${{ github.repository_owner }}" | tr 'A-Z' 'a-z')/corescope"`,
+		":edge",      // source tag we copy from
 		"crane tag",                             // metadata-only retag
 		"workflow run deploy.yml",               // fallback dispatch
 	}

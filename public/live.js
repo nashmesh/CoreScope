@@ -1,6 +1,14 @@
 (function() {
   'use strict';
 
+  // #1799 PR #1804 r1 item 9 (adv6): payload-labels.js is loaded
+  // synchronously before this script in index.html. Missing module is
+  // a packaging bug — crash loud rather than render with stale inline
+  // fallback data.
+  if (!window.PayloadLabels) {
+    throw new Error('live.js: window.PayloadLabels missing — payload-labels.js failed to load');
+  }
+
   // getParsedPath / getParsedDecoded are in shared packet-helpers.js (loaded before this file)
   var getParsedPath = window.getParsedPath;
   var getParsedDecoded = window.getParsedDecoded;
@@ -34,11 +42,16 @@
   let packetCount = 0;
   let activeAnims = 0;
   const MAX_CONCURRENT_ANIMS = 20;
+  // Perf caps for the animation overlay (see updateAnimCanvas / renderAnimations).
+  const ANIM_MAX_DPR = 1.5;       // cap backing-store pixels on hi-DPI displays
+  const ANIM_MIN_FRAME_MS = 15;   // don't redraw faster than ~60fps (high-refresh guard)
+  let _lastAnimFrame = 0;
   let nodeActivity = {};
   let recentPaths = [];
   let showGhostHops = localStorage.getItem('live-ghost-hops') !== 'false';
   let realisticPropagation = localStorage.getItem('live-realistic-propagation') === 'true';
   let showOnlyFavorites = localStorage.getItem('live-favorites-only') === 'true';
+  let multibyteOnly = localStorage.getItem('live-multibyte-only') === 'true';
   let matrixMode = localStorage.getItem('live-matrix-mode') === 'true';
   let matrixRain = localStorage.getItem('live-matrix-rain') === 'true';
   let colorByHash = localStorage.getItem('meshcore-color-packets-by-hash') !== 'false';
@@ -147,14 +160,38 @@
 
   const TYPE_COLORS = window.TYPE_COLORS || {
     ADVERT: '#22c55e', GRP_TXT: '#3b82f6', TXT_MSG: '#f59e0b', ACK: '#6b7280',
-    REQUEST: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6',
+    REQ: '#a855f7', RESPONSE: '#06b6d4', TRACE: '#ec4899', PATH: '#14b8a6',
     ANON_REQ: '#f43f5e', GRP_DATA: '#8b5cf6', MULTIPART: '#0d9488',
     CONTROL: '#b45309', RAW_CUSTOM: '#c026d3'
   };
 
+  // #1804 r1 item 7 (adv3): legend builder extracted from the live-overlay
+  // template IIFE so it is testable in isolation. See
+  // test-live-legend-helper.js. Emits one <li data-enum="<ENUM>">…</li>
+  // per entry in ORDER, each row formatted as `SHORT — LONG`.
+  //
+  // #1804 r1 item 9 (adv6): inline fallback dropped. The top-of-file
+  // guard already crashed if PayloadLabels was missing, so by the time
+  // we reach here the canonical map is guaranteed to be there.
+  function buildLegendHtml(PL) {
+    var src = (PL && PL.api) ? PL.api : PL;
+    var enums = (PL && PL.enums) ? PL.enums : PL;
+    var order = src.ORDER;
+    return order.map(function (k) {
+      var e = enums[k];
+      if (!e) return '';
+      var color = TYPE_COLORS[k] || '#888';
+      var label = e.short + ' \u2014 ' + e.long;
+      return '<li data-enum="' + k + '"><span class="live-dot" style="background:' + color + '" aria-hidden="true"></span> ' + label + '</li>';
+    }).join('');
+  }
+  // Expose for tests + downstream consumers. The unit test reads this
+  // via vm; in-page consumers can pull it off window for debugging.
+  if (typeof window !== 'undefined') { window.buildLegendHtml = buildLegendHtml; }
+
   const PAYLOAD_ICONS = {
     ADVERT: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-broadcast"/></svg>', GRP_TXT: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-chat-circle"/></svg>', TXT_MSG: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-envelope"/></svg>', ACK: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-check"/></svg>',
-    REQUEST: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-question"/></svg>', RESPONSE: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-envelope"/></svg>', TRACE: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg>', PATH: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-path"/></svg>'
+    REQ: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-question"/></svg>', RESPONSE: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-envelope"/></svg>', TRACE: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-magnifying-glass"/></svg>', PATH: '<svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-path"/></svg>'
   };
 
   /* ---- Panel Corner Positioning (#608 M0) ---- */
@@ -416,8 +453,13 @@
     var gen = VCR.replayGen;
     vcrSetMode('REPLAY');
 
-    // Reload map nodes to match the replay time
-    clearNodeMarkers();
+    // Refresh map nodes to match the replay time. Don't tear every dot down
+    // (clearNodeMarkers) — that re-renders the whole node layer and flickers on
+    // each scrub. Clear only the transient animation/path layers; loadNodes()
+    // reconciles the node set in place (keeps shared dots, removes only nodes
+    // absent at the target time, adds genuinely new ones).
+    if (animLayer) animLayer.clearLayers();
+    if (pathsLayer) pathsLayer.clearLayers();
     loadNodes(targetTs);
 
     // Fetch packets from scrub point forward (ASC order, no limit clipping from the wrong end)
@@ -1107,6 +1149,8 @@
             <span id="audioDesc" class="sr-only">Sonify packets — turn raw bytes into generative music</span>
             <label><input type="checkbox" id="liveFavoritesToggle" aria-describedby="favDesc"> ⭐ Favorites</label>
             <span id="favDesc" class="sr-only">Show only favorited and claimed nodes</span>
+            <label><input type="checkbox" id="liveMultibyteToggle" aria-describedby="multibyteDesc"> Multibyte only</label>
+            <span id="multibyteDesc" class="sr-only">Show only multibyte (≥2-byte path-hash) packets; hide unreliable single-byte traffic</span>
             <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
             </div>
             <div class="live-toggles">
@@ -1155,19 +1199,7 @@
           <div class="panel-content">
           <h3 class="legend-title">PACKET TYPES</h3>
           <ul class="legend-list">
-            <li><span class="live-dot" style="background:${TYPE_COLORS.ADVERT}" aria-hidden="true"></span> Advert — Node advertisement</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.GRP_TXT}" aria-hidden="true"></span> Message — Group text</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.TXT_MSG}" aria-hidden="true"></span> Direct — Direct message</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.REQUEST}" aria-hidden="true"></span> Request — Data request</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.RESPONSE}" aria-hidden="true"></span> Response — Data response</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.TRACE}" aria-hidden="true"></span> Trace — Route trace</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.PATH}" aria-hidden="true"></span> Path — Path discovery</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.ANON_REQ}" aria-hidden="true"></span> Anon Req — Anonymous request</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.GRP_DATA}" aria-hidden="true"></span> Grp Data — Group datagram</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.MULTIPART}" aria-hidden="true"></span> Multipart — Multi-fragment payload</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.CONTROL}" aria-hidden="true"></span> Control — Control plane</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.RAW_CUSTOM}" aria-hidden="true"></span> Raw Custom — Application-defined payload</li>
-            <li><span class="live-dot" style="background:${TYPE_COLORS.ACK}" aria-hidden="true"></span> Ack / Other — Acknowledgment or unknown type</li>
+            ${buildLegendHtml(window.PayloadLabels || null)}
           </ul>
           <h3 class="legend-title" style="margin-top:8px">NODE ROLES</h3>
           <ul class="legend-list" id="roleLegendList"></ul>
@@ -1226,6 +1258,16 @@
       if (typeof mapCfg.zoom === 'number') mapZoom = mapCfg.zoom;
     } catch { }
 
+    // #1709: URL hash lat/lon/zoom is the highest-precedence viewport source.
+    // Applied here so the very first setView() lands at the requested viewport
+    // (avoids a visible recenter from default → URL after init).
+    const initVp = (typeof parseViewportHash === 'function')
+      ? parseViewportHash(location.hash) : null;
+    if (initVp) {
+      mapCenter = [initVp.lat, initVp.lon];
+      mapZoom = initVp.zoom;
+    }
+
     map = L.map('liveMap', {
       zoomControl: false,
       attributionControl: false,
@@ -1281,7 +1323,11 @@
       const w = size.x + padX * 2;
       const h = size.y + padY * 2;
 
-    const dpr = window.devicePixelRatio || 1;
+    // Cap the backing-store DPR. The animation canvas is ~1.4x the screen area
+    // (20% pad per side); at native devicePixelRatio 2-3 that means clearing and
+    // redrawing 5-12x the screen's pixels every frame. Capping at 1.5 keeps lines
+    // crisp while cutting per-frame fill cost by up to ~4x on hi-DPI displays.
+    const dpr = Math.min(window.devicePixelRatio || 1, ANIM_MAX_DPR);
 
       // Updating width/height automatically clears the canvas
       animCanvas.width = w * dpr;
@@ -1561,6 +1607,14 @@
       showOnlyFavorites = e.target.checked;
       localStorage.setItem('live-favorites-only', showOnlyFavorites);
       applyFavoritesFilter();
+    });
+
+    const multibyteToggle = document.getElementById('liveMultibyteToggle');
+    multibyteToggle.checked = multibyteOnly;
+    multibyteToggle.addEventListener('change', (e) => {
+      multibyteOnly = e.target.checked;
+      localStorage.setItem('live-multibyte-only', multibyteOnly);
+      rebuildFeedList();
     });
 
     // Region filter (#1045): dropdown of observer IATA regions
@@ -2193,10 +2247,17 @@
       localStorage.setItem('live-feed-width', parseInt(feedEl.style.width));
     });
 
-    // Save/restore map view
-    const savedView = localStorage.getItem('live-map-view');
-    if (savedView) {
-      try { const v = JSON.parse(savedView); map.setView([v.lat, v.lng], v.zoom); } catch {}
+    // Save/restore map view. #1709: URL hash lat/lon/zoom overrides
+    // localStorage. Validated via shared parseViewportHash helper.
+    const urlVp = (typeof parseViewportHash === 'function')
+      ? parseViewportHash(location.hash) : null;
+    if (urlVp) {
+      map.setView([urlVp.lat, urlVp.lon], urlVp.zoom);
+    } else {
+      const savedView = localStorage.getItem('live-map-view');
+      if (savedView) {
+        try { const v = JSON.parse(savedView); map.setView([v.lat, v.lng], v.zoom); } catch {}
+      }
     }
     map.on('moveend', () => {
       const c = map.getCenter();
@@ -2610,6 +2671,38 @@
         safetyCap: window.LIVE_MAP_MAX_NODES || 10000,
       });
       var now = Date.now();
+      // Time-scoped reload (VCR scrub/replay): reconcile against the existing
+      // markers instead of tearing the layer down. addNodeMarker() already
+      // no-ops keys that are still present, so unchanged dots stay put (no
+      // flicker) — we only rebuild what actually differs at the target time.
+      if (beforeTs) {
+        const valid = list.filter(n => n.lat != null && n.lon != null && !(n.lat === 0 && n.lon === 0));
+        const nextKeys = new Set(valid.map(n => n.public_key));
+        // Drop markers for nodes that didn't exist at the target time.
+        for (const key in nodeMarkers) {
+          if (!nextKeys.has(key)) {
+            const stale = nodeMarkers[key];
+            if (stale && nodesLayer) { try { nodesLayer.removeLayer(stale); } catch (e) {} }
+            delete nodeMarkers[key];
+            delete nodeData[key];
+            delete nodeActivity[key];
+          }
+        }
+        // Refresh survivors whose geometry/role/name differs at the target
+        // time. addNodeMarker() no-ops existing keys, so without this a kept
+        // marker would keep showing current values rather than the time-scoped
+        // ones — drop the changed marker here so it's rebuilt by the loop below
+        // (nodeData still holds the prior values until that loop overwrites it).
+        for (const n of valid) {
+          const existing = nodeMarkers[n.public_key];
+          const prev = nodeData[n.public_key];
+          if (existing && prev && (prev.lat !== n.lat || prev.lon !== n.lon ||
+              prev.role !== n.role || (prev.name || '') !== (n.name || ''))) {
+            if (nodesLayer) { try { nodesLayer.removeLayer(existing); } catch (e) {} }
+            delete nodeMarkers[n.public_key];
+          }
+        }
+      }
       list.forEach(n => {
         if (n.lat != null && n.lon != null && !(n.lat === 0 && n.lon === 0)) {
           n._fromAPI = true;
@@ -2777,6 +2870,7 @@
     const sorted = [...byHash.values()].sort((a, b) => b.latestTs - a.latestTs).slice(0, 25);
 
     for (const group of sorted) {
+      if (multibyteOnly && !groupIsMultibyte(group.packets)) continue;
       const pkt = Object.assign({}, group.latestPkt, { observation_count: group.count });
       const decoded = pkt.decoded || {};
       const header = decoded.header || {};
@@ -3132,11 +3226,31 @@
     ws.onerror = () => {};
   }
 
+  // A packet group is multibyte when its path hash size is >= 2 bytes.
+  // All observations of one packet share the same hash size; use the first
+  // observation with a resolvable raw_hex. Unresolvable => treated as single
+  // (excluded when the "Multibyte only" filter is on).
+  function groupIsMultibyte(packets) {
+    if (!packets || !packets.length) return false;
+    for (var i = 0; i < packets.length; i++) {
+      var p = packets[i];
+      var size = window.MC_packetHashSize
+        ? window.MC_packetHashSize(p.raw_hex, p.route_type)
+        : 0;
+      if (size > 0) return size >= 2;
+    }
+    return false;
+  }
+
   // === UNIFIED PACKET RENDERER ===
   // ONE function for all rendering: WS arrival, DB load, replay button, VCR playback.
   // Takes an array of observations (same hash) and renders the complete path tree.
   function renderPacketTree(packets, isReplay) {
     if (!packets || !packets.length) return;
+    // "Multibyte only" filter: drop single-byte / unresolvable packets from the
+    // entire live view (feed, map, rain, counter — live AND replay). Placed
+    // above the counter so livePktCount reflects multibyte-only traffic.
+    if (multibyteOnly && !groupIsMultibyte(packets)) return;
     const first = packets[0];
     const decoded = first.decoded || {};
     const header = decoded.header || {};
@@ -3837,6 +3951,17 @@
     }
 
     const isPaused = VCR.mode === 'PAUSED' || VCR.speed === 0;
+
+    // High-refresh guard: cap redraw at ~60fps. Progress is time-based
+    // (tickDt reads each object's own elapsed delta, itself capped at 32ms),
+    // so skipping a frame preserves motion exactly — this only stops 120/144Hz
+    // displays from doing 2-2.4x the per-frame work for no visible benefit.
+    // Skip only while running; paused frames fall through to the sleep path below.
+    if (!isPaused && now - _lastAnimFrame < ANIM_MIN_FRAME_MS) {
+      requestAnimationFrame(renderAnimations);
+      return;
+    }
+    _lastAnimFrame = now;
 
     // Clear the canvas for this frame
     animCtx.clearRect(0, 0, animCanvas.clientWidth, animCanvas.clientHeight);
