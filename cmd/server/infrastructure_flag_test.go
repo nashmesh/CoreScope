@@ -148,6 +148,117 @@ func TestBulkHealthNodesParam(t *testing.T) {
 	}
 }
 
+// TestInfrastructureNodesEndpoint covers GET /api/nodes/infrastructure:
+// returns exactly the flagged set (indexed WHERE, not a client-side page
+// scan), carries the /api/nodes enrichment fields for repeaters, and
+// respects blacklist + hidden-prefix filtering.
+func TestInfrastructureNodesEndpoint(t *testing.T) {
+	srv, router := setupTestServer(t)
+
+	if _, err := srv.db.conn.Exec(`ALTER TABLE nodes ADD COLUMN infrastructure INTEGER NOT NULL DEFAULT 0`); err != nil {
+		t.Fatal(err)
+	}
+	srv.db.detectSchema()
+
+	recent := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	if _, err := srv.db.conn.Exec(`INSERT INTO nodes (public_key, name, role, last_seen, first_seen, infrastructure)
+		VALUES ('11aa000011112222000011112222aabb', 'Tower', 'repeater', ?, ?, 1),
+		       ('22bb000011112222000011112222aabb', 'Peak', 'repeater', ?, ?, 1),
+		       ('33cc000011112222000011112222aabb', '🚫 hidden peak', 'repeater', ?, ?, 1),
+		       ('44dd000011112222000011112222aabb', 'Regular', 'companion', ?, ?, 0)`,
+		recent, recent, recent, recent, recent, recent, recent, recent); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func() []map[string]interface{} {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/api/nodes/infrastructure", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Nodes []map[string]interface{} `json:"nodes"`
+			Total int                      `json:"total"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("bad JSON: %v", err)
+		}
+		if resp.Total != len(resp.Nodes) {
+			t.Errorf("total=%d != len(nodes)=%d", resp.Total, len(resp.Nodes))
+		}
+		return resp.Nodes
+	}
+
+	nodes := get()
+	names := map[string]bool{}
+	for _, n := range nodes {
+		names[n["name"].(string)] = true
+		if n["infrastructure"] != true {
+			t.Errorf("node %v: endpoint returned a non-flagged node", n["name"])
+		}
+		// Enrichment parity with /api/nodes: repeater rows carry relay fields.
+		if n["role"] == "repeater" {
+			if _, ok := n["relay_active"]; !ok {
+				t.Errorf("node %v: missing relay enrichment (relay_active)", n["name"])
+			}
+			if _, ok := n["traffic_share_score"]; !ok {
+				t.Errorf("node %v: missing traffic_share_score enrichment", n["name"])
+			}
+		}
+	}
+	if !names["Tower"] || !names["Peak"] {
+		t.Errorf("expected Tower + Peak in response, got %v", names)
+	}
+	if names["Regular"] {
+		t.Error("unflagged node leaked into /api/nodes/infrastructure")
+	}
+
+	// Hidden-prefix filter.
+	srv.cfg.SetHiddenNamePrefixes([]string{"🚫"})
+	nodes = get()
+	for _, n := range nodes {
+		if name, _ := n["name"].(string); name == "🚫 hidden peak" {
+			t.Error("hidden-prefix node leaked into /api/nodes/infrastructure")
+		}
+	}
+
+	// Blacklist filter.
+	srv.cfg.NodeBlacklist = []string{"11aa000011112222000011112222aabb"}
+	srv.cfg.SetNodeBlacklist(srv.cfg.NodeBlacklist)
+	nodes = get()
+	for _, n := range nodes {
+		if n["public_key"] == "11aa000011112222000011112222aabb" {
+			t.Error("blacklisted node leaked into /api/nodes/infrastructure")
+		}
+	}
+}
+
+// TestInfrastructureNodesEndpointOldDB: pre-migration DB (no column) must
+// yield an empty list, not a SQL error.
+func TestInfrastructureNodesEndpointOldDB(t *testing.T) {
+	srv, router := setupTestServer(t)
+	if srv.db.hasInfrastructure {
+		t.Fatal("test premise broken: setupTestServer should not have the infrastructure column")
+	}
+	req := httptest.NewRequest("GET", "/api/nodes/infrastructure", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Nodes []map[string]interface{} `json:"nodes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if len(resp.Nodes) != 0 {
+		t.Errorf("pre-migration DB should return empty list, got %d", len(resp.Nodes))
+	}
+}
+
 func TestInfrastructureFlagOldDBDefaultsFalse(t *testing.T) {
 	db := setupTestDB(t) // schema WITHOUT the infrastructure column
 	defer db.Close()

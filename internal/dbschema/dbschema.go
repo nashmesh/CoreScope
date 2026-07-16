@@ -670,6 +670,11 @@ func ensureInfrastructureColumns(rw *sql.DB, logf Logger) error {
 		}
 		logf("[dbschema] added infrastructure column to %s", table)
 	}
+	// Serves /api/nodes/infrastructure's `WHERE infrastructure = 1`.
+	// PREFLIGHT: async=true reason="partial CREATE INDEX on nodes (bounded to a few thousand rows in prod) matching only the handful of flagged rows — sub-millisecond build"
+	if _, err := rw.Exec(`CREATE INDEX IF NOT EXISTS idx_nodes_infrastructure ON nodes(infrastructure) WHERE infrastructure = 1`); err != nil {
+		return fmt.Errorf("create idx_nodes_infrastructure: %w", err)
+	}
 	if _, err := rw.Exec(`INSERT OR IGNORE INTO _migrations (name) VALUES ('nodes_infrastructure_v1')`); err != nil {
 		return fmt.Errorf("record nodes_infrastructure_v1: %w", err)
 	}

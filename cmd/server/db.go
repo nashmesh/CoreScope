@@ -1025,6 +1025,29 @@ func (db *DB) GetNodeByPrefix(prefix string) (map[string]interface{}, bool, erro
 	return first, false, nil
 }
 
+// GetInfrastructureNodes returns all nodes flagged infrastructure=1
+// (#infra), newest first. A direct indexed WHERE beats paging the whole
+// node table through /api/nodes just to keep the curated few. Returns
+// empty (not error) on pre-migration DBs without the column.
+func (db *DB) GetInfrastructureNodes() ([]map[string]interface{}, error) {
+	if !db.hasInfrastructure {
+		return []map[string]interface{}{}, nil
+	}
+	rows, err := db.conn.Query(fmt.Sprintf(
+		"SELECT %s FROM nodes WHERE infrastructure = 1 ORDER BY last_seen DESC", db.nodeSelectCols()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	nodes := make([]map[string]interface{}, 0, 16)
+	for rows.Next() {
+		if n := db.scanNodeRow(rows); n != nil {
+			nodes = append(nodes, n)
+		}
+	}
+	return nodes, rows.Err()
+}
+
 // GetNodeByPubkey returns a single node.
 func (db *DB) GetNodeByPubkey(pubkey string) (map[string]interface{}, error) {
 	rows, err := db.conn.Query(fmt.Sprintf("SELECT %s FROM nodes WHERE public_key = ?", db.nodeSelectCols()), pubkey)

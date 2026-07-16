@@ -120,13 +120,17 @@ const bottomNavSrc = fs.readFileSync(path.join(__dirname, 'public', 'bottom-nav.
 
 assert(/registerPage\('infrastructure',\s*\{\s*init,\s*destroy\s*\}\)/.test(infraPageSrc),
   'infrastructure.js registers the page module');
-// Perf contract: exactly two data sources — fetchAllNodes + scoped bulk-health.
-assert(/fetchAllNodes\(/.test(infraPageSrc) && /bulk-health\?limit=.*&nodes=/.test(infraPageSrc),
-  'page loads via fetchAllNodes + scoped bulk-health');
+// Perf contract: exactly two data sources — the dedicated infra endpoint
+// + scoped bulk-health. NOT fetchAllNodes (paging the whole node table
+// to keep a handful was the v1 shape; the endpoint replaced it).
+assert(/api\('\/nodes\/infrastructure'/.test(infraPageSrc) && /bulk-health\?limit=.*&nodes=/.test(infraPageSrc),
+  'page loads via /nodes/infrastructure + scoped bulk-health');
+assert(!/fetchAllNodes\(/.test(infraPageSrc),
+  'page does NOT page the whole node table via fetchAllNodes');
 {
   const apiCalls = infraPageSrc.match(/\bapi\('[^']+/g) || [];
-  assert(apiCalls.length === 1 && /bulk-health/.test(apiCalls[0]),
-    `page makes exactly one api() call (scoped bulk-health); got ${JSON.stringify(apiCalls)}`);
+  assert(apiCalls.length === 2 && apiCalls.some(c => /nodes\/infrastructure/.test(c)) && apiCalls.some(c => /bulk-health/.test(c)),
+    `page makes exactly two api() calls (infra list + scoped bulk-health); got ${JSON.stringify(apiCalls)}`);
 }
 assert(/sa === 'stale' \? -1 : 1/.test(infraPageSrc),
   'page sorts stale infra nodes first');

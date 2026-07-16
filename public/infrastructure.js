@@ -3,8 +3,10 @@
  * Dedicated performance view for operator-curated infrastructure nodes
  * (nodes.infrastructure flag, set via scripts/set-infra.sh).
  *
- * Perf contract: exactly TWO bulk API calls per load —
- *   1. fetchAllNodes()                      → flags, battery, relay, scores
+ * Perf contract: exactly TWO API calls per load —
+ *   1. /api/nodes/infrastructure            → the flagged set only (indexed
+ *      WHERE, same shape + enrichment as /api/nodes — no paging the whole
+ *      node table to keep a handful)
  *   2. /api/nodes/bulk-health?nodes=pk,…    → SNR / packets-today / observers
  * No per-node fetches; per-node history stays one click away on the
  * node-analytics page.
@@ -148,8 +150,8 @@ window.InfraSummary = {
     if (!listEl) return;
 
     try {
-      const { nodes } = await fetchAllNodes('', { ttl: CLIENT_TTL.nodeList });
-      const infra = nodes.filter(n => window.isInfrastructureNode(n));
+      const data = await api('/nodes/infrastructure', { ttl: CLIENT_TTL.nodeList });
+      const infra = (data && Array.isArray(data.nodes)) ? data.nodes : [];
 
       // Health for exactly the infra set — single scoped bulk call (#infra).
       let healthByPk = new Map();
