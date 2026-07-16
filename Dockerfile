@@ -56,7 +56,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # Runtime image
 FROM alpine:3.20
 
-RUN apk add --no-cache mosquitto mosquitto-clients supervisor caddy wget
+RUN apk add --no-cache mosquitto mosquitto-clients supervisor caddy wget sqlite
 
 WORKDIR /app
 
@@ -66,6 +66,13 @@ COPY --from=builder /corescope-server /corescope-ingestor /corescope-decrypt /ap
 # Frontend assets + config
 COPY public/ ./public/
 COPY config.example.json channel-rainbow.json ./
+
+# Admin CLI: mark/unmark infrastructure nodes from INSIDE the container.
+# Host-side sqlite3 against the bind-mounted WAL DB corrupts it on
+# macOS/virtiofs (shm index not coherent across the VM boundary), so the
+# script ships in-image:
+#   docker exec <container> /app/scripts/set-infra.sh /app/data/meshcore.db <prefix> on
+COPY scripts/set-infra.sh ./scripts/set-infra.sh
 
 # Bake git commit SHA — manage.sh and CI write .git-commit before build
 # Default to "unknown" if not provided
