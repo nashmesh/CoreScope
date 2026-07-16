@@ -174,9 +174,7 @@ window.InfraSummary = {
 
       if (!infra.length) {
         listEl.innerHTML = `<div class="infrap-empty">
-          <p>No infrastructure nodes marked yet.</p>
-          <p class="text-muted">Mark community infrastructure (well-placed towers, mountain peaks) from the server:</p>
-          <pre>scripts/set-infra.sh &lt;db-path&gt; &lt;pubkey-or-prefix&gt; on</pre>
+          <p>No infrastructure nodes currently exist.</p>
         </div>`;
         const mapEl = document.getElementById('infraPageMap');
         if (mapEl) mapEl.hidden = true;
