@@ -58,6 +58,7 @@
   // `ph` is the Phosphor icon id (no "ph-" prefix); see public/icons/phosphor-sprite.svg.
   var ROUTES = [
     { route: 'nodes',     hash: '#/nodes',     label: 'Nodes',     ph: 'monitor' },
+    { route: 'infrastructure', hash: '#/infrastructure', label: 'Infra', ph: 'cell-signal-high' },
     { route: 'tools',     hash: '#/tools',     label: 'Tools',     ph: 'wrench' },
     { route: 'observers', hash: '#/observers', label: 'Observers', ph: 'eye' },
     { route: 'analytics', hash: '#/analytics', label: 'Analytics', ph: 'chart-bar' },

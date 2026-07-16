@@ -261,6 +261,7 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 
 	// Node endpoints — fixed routes BEFORE parameterized
 	r.HandleFunc("/api/nodes/search", s.handleNodeSearch).Methods("GET")
+	r.HandleFunc("/api/nodes/infrastructure", s.handleInfrastructureNodes).Methods("GET")
 	r.HandleFunc("/api/nodes/bulk-health", s.handleBulkHealth).Methods("GET")
 	r.HandleFunc("/api/nodes/network-status", s.handleNetworkStatus).Methods("GET")
 	r.HandleFunc("/api/nodes/{pubkey}/health", s.handleNodeHealth).Methods("GET")
@@ -1348,83 +1349,7 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	if s.store != nil {
-		hashInfo := s.store.GetNodeHashSizeInfo()
-		relayWindow := s.cfg.GetHealthThresholds().RelayActiveHours
-		// #1257: bulk-compute relay info + usefulness scores ONCE per
-		// request (cached 15s) instead of calling the per-node helpers
-		// inside the loop. The per-node calls each grabbed their own
-		// RLock and walked byPathHop[pk] + byPayloadType, blowing
-		// /api/nodes up to 30+s on busy networks.
-		var relayMap map[string]RepeaterRelayInfo
-		var usefulMap map[string]float64
-		needsRelay := false
-		for _, node := range nodes {
-			if role, _ := node["role"].(string); role == "repeater" || role == "room" {
-				needsRelay = true
-				break
-			}
-		}
-		if needsRelay {
-			relayMap = s.store.GetRepeaterRelayInfoMap(relayWindow)
-			usefulMap = s.store.GetRepeaterUsefulnessScoreMap()
-		}
-		// Bridge axis (#672 axis 2 of 4). Snapshot is an atomic load
-		// — safe to call regardless of needsRelay, and we want the
-		// score on repeater rows specifically.
-		bridgeMap := s.store.GetBridgeScoreMap()
-		// Coverage + Redundancy axes (#672 axes 3 & 4). Atomic snapshots,
-		// same discipline as the bridge map.
-		coverageMap := s.store.GetCoverageScoreMap()
-		redundancyMap := s.store.GetRedundancyScoreMap()
-		// Whether the structural-axis recomputer has produced a snapshot yet:
-		// distinguishes a genuinely isolated repeater (real "F") from cold
-		// start (grade withheld) for the all-zero node (#1762 MAJOR-4).
-		axesComputed := s.store.UsefulnessAxesComputed()
-		// Population max of the raw Traffic axis, used to max-normalize
-		// traffic into the composite (the other three axes are already
-		// max-normalized; #1762 review).
-		maxUseful := maxFloat(usefulMap)
-		for _, node := range nodes {
-			if pk, ok := node["public_key"].(string); ok {
-				EnrichNodeWithHashSize(node, hashInfo[pk])
-				mbEntry, _ := s.store.GetMultibyteCapFor(pk)
-				EnrichNodeWithMultiByte(node, mbEntry)
-				if role, _ := node["role"].(string); role == "repeater" || role == "room" {
-					info, _ := lookupRelayInfo(relayMap, pk)
-					info.WindowHours = relayWindow
-					if info.LastRelayed != "" {
-						node["last_relayed"] = info.LastRelayed
-					}
-					node["relay_active"] = info.RelayActive
-					node["relay_count_1h"] = info.RelayCount1h
-					node["relay_count_24h"] = info.RelayCount24h
-					node["unscoped_relay_count_24h"] = info.UnscopedRelayCount24h
-					// #1751: region scopes this repeater has transported.
-					// Set only when non-empty so the field is absent for
-					// nodes without scopes / on older schemas.
-					if len(info.TransportedScopes) > 0 {
-						node["transported_scopes"] = info.TransportedScopes
-					}
-					// #672 4-axis usefulness. traffic_share_score keeps the
-					// raw per-axis Traffic value (#1456); the structural axes
-					// are surfaced individually; the composite uses the
-					// max-normalized traffic so its 0.20 weight is real.
-					trafficRaw := lookupUsefulnessScore(usefulMap, pk)
-					trafficNorm := 0.0
-					if maxUseful > 0 {
-						trafficNorm = trafficRaw / maxUseful
-					}
-					enrichNodeUsefulness(node, trafficRaw, usefulnessAxes{
-						Traffic:    trafficNorm,
-						Bridge:     lookupUsefulnessScore(bridgeMap, pk),
-						Coverage:   lookupUsefulnessScore(coverageMap, pk),
-						Redundancy: lookupUsefulnessScore(redundancyMap, pk),
-					}, axesComputed)
-				}
-			}
-		}
-	}
+	s.enrichNodeList(nodes)
 	if s.cfg.GeoFilter != nil {
 		filtered := nodes[:0]
 		for _, node := range nodes {
@@ -1499,6 +1424,125 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, NodeListResponse{Nodes: nodes, Total: total, Counts: counts})
+}
+
+// enrichNodeList applies the store-backed per-node enrichment (hash size,
+// multi-byte status, relay activity + the #672 4-axis usefulness scores
+// for repeaters/rooms) shared by /api/nodes and /api/nodes/infrastructure.
+// No-op when the store isn't wired.
+func (s *Server) enrichNodeList(nodes []map[string]interface{}) {
+	if s.store == nil {
+		return
+	}
+	hashInfo := s.store.GetNodeHashSizeInfo()
+	relayWindow := s.cfg.GetHealthThresholds().RelayActiveHours
+	// #1257: bulk-compute relay info + usefulness scores ONCE per
+	// request (cached 15s) instead of calling the per-node helpers
+	// inside the loop. The per-node calls each grabbed their own
+	// RLock and walked byPathHop[pk] + byPayloadType, blowing
+	// /api/nodes up to 30+s on busy networks.
+	var relayMap map[string]RepeaterRelayInfo
+	var usefulMap map[string]float64
+	needsRelay := false
+	for _, node := range nodes {
+		if role, _ := node["role"].(string); role == "repeater" || role == "room" {
+			needsRelay = true
+			break
+		}
+	}
+	if needsRelay {
+		relayMap = s.store.GetRepeaterRelayInfoMap(relayWindow)
+		usefulMap = s.store.GetRepeaterUsefulnessScoreMap()
+	}
+	// Bridge axis (#672 axis 2 of 4). Snapshot is an atomic load
+	// — safe to call regardless of needsRelay, and we want the
+	// score on repeater rows specifically.
+	bridgeMap := s.store.GetBridgeScoreMap()
+	// Coverage + Redundancy axes (#672 axes 3 & 4). Atomic snapshots,
+	// same discipline as the bridge map.
+	coverageMap := s.store.GetCoverageScoreMap()
+	redundancyMap := s.store.GetRedundancyScoreMap()
+	// Whether the structural-axis recomputer has produced a snapshot yet:
+	// distinguishes a genuinely isolated repeater (real "F") from cold
+	// start (grade withheld) for the all-zero node (#1762 MAJOR-4).
+	axesComputed := s.store.UsefulnessAxesComputed()
+	// Population max of the raw Traffic axis, used to max-normalize
+	// traffic into the composite (the other three axes are already
+	// max-normalized; #1762 review).
+	maxUseful := maxFloat(usefulMap)
+	for _, node := range nodes {
+		if pk, ok := node["public_key"].(string); ok {
+			EnrichNodeWithHashSize(node, hashInfo[pk])
+			mbEntry, _ := s.store.GetMultibyteCapFor(pk)
+			EnrichNodeWithMultiByte(node, mbEntry)
+			if role, _ := node["role"].(string); role == "repeater" || role == "room" {
+				info, _ := lookupRelayInfo(relayMap, pk)
+				info.WindowHours = relayWindow
+				if info.LastRelayed != "" {
+					node["last_relayed"] = info.LastRelayed
+				}
+				node["relay_active"] = info.RelayActive
+				node["relay_count_1h"] = info.RelayCount1h
+				node["relay_count_24h"] = info.RelayCount24h
+				node["unscoped_relay_count_24h"] = info.UnscopedRelayCount24h
+				// #1751: region scopes this repeater has transported.
+				// Set only when non-empty so the field is absent for
+				// nodes without scopes / on older schemas.
+				if len(info.TransportedScopes) > 0 {
+					node["transported_scopes"] = info.TransportedScopes
+				}
+				// #672 4-axis usefulness. traffic_share_score keeps the
+				// raw per-axis Traffic value (#1456); the structural axes
+				// are surfaced individually; the composite uses the
+				// max-normalized traffic so its 0.20 weight is real.
+				trafficRaw := lookupUsefulnessScore(usefulMap, pk)
+				trafficNorm := 0.0
+				if maxUseful > 0 {
+					trafficNorm = trafficRaw / maxUseful
+				}
+				enrichNodeUsefulness(node, trafficRaw, usefulnessAxes{
+					Traffic:    trafficNorm,
+					Bridge:     lookupUsefulnessScore(bridgeMap, pk),
+					Coverage:   lookupUsefulnessScore(coverageMap, pk),
+					Redundancy: lookupUsefulnessScore(redundancyMap, pk),
+				}, axesComputed)
+			}
+		}
+	}
+}
+
+// handleInfrastructureNodes returns all operator-curated infrastructure
+// nodes (#infra) — a direct `WHERE infrastructure = 1` query instead of
+// paging the whole node table client-side. Same node shape + enrichment
+// as /api/nodes; blacklist and hidden-prefix filters apply (mirrors
+// handleNodeSearch's inline loops).
+func (s *Server) handleInfrastructureNodes(w http.ResponseWriter, r *http.Request) {
+	nodes, err := s.db.GetInfrastructureNodes()
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	s.enrichNodeList(nodes)
+	if len(s.cfg.NodeBlacklist) > 0 {
+		filtered := make([]map[string]interface{}, 0, len(nodes))
+		for _, node := range nodes {
+			if pk, ok := node["public_key"].(string); !ok || !s.cfg.IsBlacklisted(pk) {
+				filtered = append(filtered, node)
+			}
+		}
+		nodes = filtered
+	}
+	if len(s.cfg.HiddenNamePrefixes) > 0 {
+		filtered := make([]map[string]interface{}, 0, len(nodes))
+		for _, node := range nodes {
+			name, _ := node["name"].(string)
+			if !s.cfg.IsNameHidden(name) {
+				filtered = append(filtered, node)
+			}
+		}
+		nodes = filtered
+	}
+	writeJSON(w, NodeListResponse{Nodes: nodes, Total: len(nodes)})
 }
 
 func (s *Server) handleNodeSearch(w http.ResponseWriter, r *http.Request) {
@@ -1667,10 +1711,26 @@ func (s *Server) handleNodeHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBulkHealth(w http.ResponseWriter, r *http.Request) {
 	lim := queryLimit(r, 50, s.cfg.ListLimits.BulkHealthMax)
 
+	// Optional exact-pubkey scope (#infra): ?nodes=pk1,pk2,… returns health
+	// for exactly those nodes in one call (the infrastructure page's curated
+	// set). Capped by the same BulkHealthMax clamp as the limit path.
+	var pubkeys []string
+	if nodesParam := r.URL.Query().Get("nodes"); nodesParam != "" {
+		for _, pk := range strings.Split(nodesParam, ",") {
+			pk = strings.TrimSpace(pk)
+			if pk != "" {
+				pubkeys = append(pubkeys, pk)
+			}
+		}
+		if len(pubkeys) > lim {
+			pubkeys = pubkeys[:lim]
+		}
+	}
+
 	if s.store != nil {
 		region := r.URL.Query().Get("region")
 		area := r.URL.Query().Get("area")
-		results := s.store.GetBulkHealth(lim, region, area)
+		results := s.store.GetBulkHealth(lim, region, area, pubkeys)
 		// Filter blacklisted nodes + hidden-prefix nodes (#1181).
 		needsBlacklist := len(s.cfg.NodeBlacklist) > 0
 		needsHidden := len(s.cfg.HiddenNamePrefixes) > 0

@@ -2178,7 +2178,7 @@ func TestStoreGetBulkHealthWithStore(t *testing.T) {
 	store := NewPacketStore(db, nil)
 	store.Load()
 
-	results := store.GetBulkHealth(50, "", "")
+	results := store.GetBulkHealth(50, "", "", nil)
 	if len(results) == 0 {
 		t.Error("expected bulk health results")
 	}
@@ -2193,7 +2193,7 @@ func TestStoreGetBulkHealthWithStore(t *testing.T) {
 	}
 
 	t.Run("with region filter", func(t *testing.T) {
-		results := store.GetBulkHealth(50, "SJC", "")
+		results := store.GetBulkHealth(50, "SJC", "", nil)
 		_ = results
 	})
 }

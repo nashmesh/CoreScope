@@ -89,6 +89,8 @@ func TestApplyAddsOptionalColumns_CanonicalSource(t *testing.T) {
 		{"nodes", "default_scope"},
 		{"inactive_nodes", "default_scope"},
 		{"observations", "raw_hex"},
+		{"nodes", "infrastructure"},
+		{"inactive_nodes", "infrastructure"},
 	}
 	for _, c := range cases {
 		has, err := TableHasColumn(db, c.table, c.col)
@@ -138,7 +140,7 @@ func TestAssertReady_RequiresOptionalColumns(t *testing.T) {
 	if err == nil {
 		t.Fatal("AssertReady should fail when scope_name/default_scope/observations.raw_hex are missing (#1321)")
 	}
-	for _, must := range []string{"scope_name", "default_scope", "raw_hex"} {
+	for _, must := range []string{"scope_name", "default_scope", "raw_hex", "infrastructure"} {
 		if !contains(err.Error(), must) {
 			t.Errorf("AssertReady error should mention missing %q; got: %v", must, err)
 		}

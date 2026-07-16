@@ -444,6 +444,17 @@
     };
   };
 
+  // ─── Infrastructure nodes (#infra) ───
+  // Operator-curated flag (nodes.infrastructure column, set via
+  // scripts/set-infra.sh) marking well-placed community deployments
+  // (towers, mountain peaks) that anchor network connectivity.
+  // NOT the same as the role-based `isInfra` locals used for health
+  // thresholds below — those mean "role is repeater/room".
+  window.isInfrastructureNode = function (n) {
+    return !!(n && n.infrastructure);
+  };
+  window.INFRA_BADGE_TITLE = 'Community infrastructure node — a well-placed deployment (tower, mountain peak) that anchors network connectivity';
+
   // Simplified two-state helper: returns 'active' or 'stale'
   window.getNodeStatus = function (role, lastSeenMs) {
     var isInfra = role === 'repeater' || role === 'room';

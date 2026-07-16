@@ -33,6 +33,9 @@ corescope-server
 cmd/server/server
 # Local-only planning and design files
 docs/superpowers/
+# Local Docker bind-mount data dir (live DB + config.json with secrets)
+meshcore-data/
+docker-compose.bak.yml
 
 # Environment-specific deploy scripts — live only on the deploy host, not tracked
 deploy-live.sh

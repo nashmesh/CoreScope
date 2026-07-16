@@ -9,7 +9,7 @@
   let nodes = [];
   let targetNodeKey = null;
   let observers = [];
-  let filters = { repeater: true, companion: true, room: true, sensor: true, observer: true, lastHeard: '30d', neighbors: false, clustering: localStorage.getItem('meshcore-map-clustering') !== 'false', hashLabels: localStorage.getItem('meshcore-map-hash-labels') !== 'false', statusFilter: localStorage.getItem('meshcore-map-status-filter') || 'all', byteSize: localStorage.getItem('meshcore-map-byte-filter') || 'all', multiByteOverlay: localStorage.getItem('meshcore-map-multibyte-overlay') === 'true' };
+  let filters = { repeater: true, companion: true, room: true, sensor: true, observer: true, lastHeard: '30d', neighbors: false, clustering: localStorage.getItem('meshcore-map-clustering') !== 'false', hashLabels: localStorage.getItem('meshcore-map-hash-labels') !== 'false', statusFilter: localStorage.getItem('meshcore-map-status-filter') || 'all', byteSize: localStorage.getItem('meshcore-map-byte-filter') || 'all', multiByteOverlay: localStorage.getItem('meshcore-map-multibyte-overlay') === 'true', infraOnly: localStorage.getItem('meshcore-map-infra-only') === 'true' };
   let selectedReferenceNode = null;  // pubkey of the reference node for neighbor filtering
   let neighborPubkeys = null;        // Set of pubkeys that are direct neighbors of selected node
   let wsHandler = null;
@@ -60,7 +60,7 @@
   // scope (not loop-local) to avoid per-iteration object allocation.
   var MB_MARKER_TINT = { confirmed: '#56F0A0', suspected: '#FFD966', unknown: '#FF8888' };
 
-  function makeMarkerIcon(role, isStale, isAlsoObserver, colorOverride) {
+  function makeMarkerIcon(role, isStale, isAlsoObserver, colorOverride, isInfraNode) {
     const s = ROLE_STYLE[role] || ROLE_STYLE.companion;
     // #1438: default fill resolves through the live CSS var so existing
     // mounted SVG markers recolor when cb-preset switches or the
@@ -126,17 +126,30 @@
       }
       obsOverlay = `<g transform="translate(${sx},${sy})"><polygon points="${starPts.trim()}" fill="var(--mc-role-observer)" stroke="var(--mc-marker-stroke-color)" stroke-width="0.8" stroke-opacity="var(--mc-marker-stroke-opacity)"/></g>`;
     }
-    const svg = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">${path}${obsOverlay}</svg>`;
+    // Infrastructure (#infra): pad the canvas and draw an accent ring
+    // around the role shape. The inner shape keeps its coordinates —
+    // it's re-centered via a <g translate> onto the padded canvas.
+    let outer = size, oc = c, infraRing = '';
+    if (isInfraNode) {
+      const pad = 4;
+      outer = size + pad * 2;
+      oc = outer / 2;
+      infraRing = `<circle cx="${oc}" cy="${oc}" r="${oc - 1.5}" fill="none" stroke="var(--mc-infra)" stroke-width="2"/>`;
+      path = `<g transform="translate(${pad},${pad})">${path}${obsOverlay}</g>`;
+      obsOverlay = '';
+    }
+    const svg = `<svg width="${outer}" height="${outer}" viewBox="0 0 ${outer} ${outer}" xmlns="http://www.w3.org/2000/svg">${infraRing}${path}${obsOverlay}</svg>`;
     return L.divIcon({
       html: svg,
       className: 'meshcore-marker' + (isStale ? ' marker-stale' : ''),
-      iconSize: [size, size],
-      iconAnchor: [c, c],
-      popupAnchor: [0, -c],
+      iconSize: [outer, outer],
+      iconAnchor: [oc, oc],
+      popupAnchor: [0, -oc],
     });
   }
 
   function makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus) {
+    var isInfraNode = window.isInfrastructureNode && window.isInfrastructureNode(node);
     var hs = node.hash_size || 1;
     // Show the short mesh hash ID (first N bytes of pubkey, uppercased)
     var shortHash = node.public_key ? node.public_key.slice(0, hs * 2).toUpperCase() : '??';
@@ -145,8 +158,11 @@
     var status = mbStatus || null;
     var glyph = status ? (MB_GLYPHS[status] || MB_GLYPHS.unknown) : '';
     var statusClass = status ? (' ' + (MB_STATUS_CLASS[status] || MB_STATUS_CLASS.unknown)) : '';
-    var ariaStatus = status ? ('multi-byte ' + status + ', hash ' + shortHash)
-                            : ('repeater hash ' + shortHash);
+    // Infrastructure (#infra): accent ring via CSS class (box-shadow).
+    if (isInfraNode) statusClass += ' mc-infra-label';
+    var ariaStatus = (isInfraNode ? 'infrastructure ' : '') +
+      (status ? ('multi-byte ' + status + ', hash ' + shortHash)
+              : ('repeater hash ' + shortHash));
     // Observer indicator stays a star — it is an orthogonal signal, not a status color.
     var obsIndicator = isAlsoObserver
       ? ' <span aria-hidden="true" style="color:' + (ROLE_COLORS.observer || '#f1c40f') + ';font-size:13px;line-height:1;" title="Also an observer"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-star-fill"/></svg></span>'
@@ -217,6 +233,7 @@
           </fieldset>
           <fieldset class="mc-section">
             <legend class="mc-label">Filters</legend>
+            <label for="mcInfraOnly" title="Operator-curated infrastructure nodes (towers, peaks)"><input type="checkbox" id="mcInfraOnly"> Infrastructure only</label>
             <label for="mcNeighbors"><input type="checkbox" id="mcNeighbors"> Show direct neighbors</label>
             <div id="mcNeighborRef" style="display:none;font-size:11px;color:var(--text-muted);margin-top:2px;padding-left:20px;">Ref: <span id="mcNeighborRefName">—</span></div>
             <div id="mcNeighborHint" style="display:none;font-size:11px;color:var(--text-muted);margin-top:2px;padding-left:20px;">Click a node marker to set the reference node</div>
@@ -517,6 +534,12 @@
     if (multiByteEl) {
       multiByteEl.checked = filters.multiByteOverlay;
       multiByteEl.addEventListener('change', e => { filters.multiByteOverlay = e.target.checked; localStorage.setItem('meshcore-map-multibyte-overlay', e.target.checked); renderMarkers(); });
+    }
+    // Infrastructure-only filter (#infra)
+    const infraOnlyEl = document.getElementById('mcInfraOnly');
+    if (infraOnlyEl) {
+      infraOnlyEl.checked = filters.infraOnly;
+      infraOnlyEl.addEventListener('change', e => { filters.infraOnly = e.target.checked; localStorage.setItem('meshcore-map-infra-only', e.target.checked); renderMarkers(); });
     }
     document.getElementById('mcLastHeard').addEventListener('change', e => { filters.lastHeard = e.target.value; loadNodes(); });
 
@@ -1595,6 +1618,8 @@
         const status = getNodeStatus(role, lastMs);
         if (status !== filters.statusFilter) return false;
       }
+      // Infrastructure-only filter (#infra)
+      if (filters.infraOnly && !window.isInfrastructureNode(n)) return false;
       // Neighbor filter: show only the reference node and its direct neighbors
       if (filters.neighbors && selectedReferenceNode && neighborPubkeys) {
         const pk = n.public_key;
@@ -1628,7 +1653,7 @@
         // set kept in sync with --mc-mb-* CSS stripes so label + marker agree.
         mbColor = MB_MARKER_TINT[mbStatus] || MB_MARKER_TINT.unknown;
       }
-      const icon = useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus) : makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, mbColor);
+      const icon = useLabel ? makeRepeaterLabelIcon(node, isStale, isAlsoObserver, mbStatus) : makeMarkerIcon(node.role || 'companion', isStale, isAlsoObserver, mbColor, window.isInfrastructureNode(node));
       const latLng = L.latLng(node.lat, node.lon);
       allMarkers.push({ latLng, node, icon, isLabel: useLabel, popupFn: function() { return buildPopup(node); }, alt: (node.name || 'Unknown') + ' (' + (node.role || 'node') + (isAlsoObserver ? ' + observer' : '') + ')' });
     }
@@ -1772,6 +1797,7 @@
     // Check if this node is also an observer (combined repeater+observer)
     const matchingObs = node.public_key ? _observerByPubkey.get(node.public_key.toLowerCase()) : null;
     const obsBadge = matchingObs ? ` <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${ROLE_COLORS.observer || '#f1c40f'};color:#fff;">OBSERVER</span>` : '';
+    const infraBadge = window.isInfrastructureNode(node) ? ` <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:var(--mc-infra);color:var(--mc-infra-text);" title="${window.INFRA_BADGE_TITLE}">INFRA</span>` : '';
     const hs = node.hash_size || 1;
     const hashPrefix = node.public_key ? node.public_key.slice(0, hs * 2).toUpperCase() : '—';
     const hashPrefixRow = `<dt style="color:var(--text-muted);float:left;clear:left;width:80px;padding:2px 0;">Hash Prefix</dt>
@@ -1788,7 +1814,7 @@
     return `
       <div class="map-popup" style="font-family:var(--font);min-width:180px;">
         <h3 style="font-weight:700;font-size:14px;margin:0 0 4px;">${safeEsc(node.name || 'Unknown')}</h3>
-        ${roleBadge}${obsBadge}
+        ${roleBadge}${obsBadge}${infraBadge}
         <dl style="margin-top:8px;font-size:12px;">
           ${hashPrefixRow}
           ${mbRow}
