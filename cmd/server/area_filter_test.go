@@ -335,7 +335,7 @@ func TestResolveAreaNodes_CalledBeforeRLock(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.GetBulkHealth(10, "", "BEL")
+			s.GetBulkHealth(10, "", "BEL", nil)
 		}()
 	}
 	wg.Wait() // must not deadlock
@@ -393,7 +393,7 @@ func TestGetBulkHealth_AreaBypassesCap(t *testing.T) {
 	s := newTestStoreWithDB(t, db, cfg)
 
 	// With limit=10 but area filter active, all 510 in-area nodes must be returned.
-	result := s.GetBulkHealth(10, "", "BEL")
+	result := s.GetBulkHealth(10, "", "BEL", nil)
 	if len(result) != 510 {
 		t.Errorf("want 510 nodes from area BEL, got %d", len(result))
 	}

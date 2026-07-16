@@ -4607,11 +4607,13 @@ body[data-cb-preset="achromat"] {
   background: var(--surface-1);
   overflow: hidden;
 }
+.infra-panel-bar { display: flex; align-items: center; }
 .infra-panel-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 8px 12px;
   background: none;
   border: none;
@@ -4619,6 +4621,14 @@ body[data-cb-preset="achromat"] {
   font: inherit;
   cursor: pointer;
   text-align: left;
+}
+.infra-panel-viewall {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--link-color);
+  text-decoration: none;
+  white-space: nowrap;
 }
 .infra-panel-summary { color: var(--text-muted); font-size: 12px; }
 .infra-panel-chevron { margin-left: auto; }
@@ -4657,6 +4667,98 @@ body[data-cb-preset="achromat"] {
 }
 @media (max-width: 640px) {
   .infra-card { max-width: none; }
+}
+
+/* Infrastructure page (#infra) — #/infrastructure performance view */
+.infrap { padding: 12px 16px; max-width: 1200px; margin: 0 auto; }
+.infrap-header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.infrap-header h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.infrap-blurb { font-size: 12px; margin: 4px 0 12px; }
+.infrap-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.infrap-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.infrap-chip strong { color: var(--text); }
+.infrap-chip-warn { border-color: var(--status-red); color: var(--status-red); }
+.infrap-map {
+  height: 260px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.infrap-map-marker {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--mc-infra);
+  background: var(--surface-1);
+}
+.infrap-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+.infrap-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--mc-infra);
+  border-radius: 6px;
+  background: var(--surface-1);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.infrap-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.infrap-name { font-weight: 700; font-size: 14px; color: var(--text); text-decoration: none; }
+.infrap-name:hover { color: var(--link-color); }
+.infrap-relay-badge { background: var(--status-green); color: #1a1a1a; font-size: 10px; }
+.infrap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+.infrap-stat { display: flex; flex-direction: column; }
+.infrap-stat-label { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.infrap-score { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.infrap-score-label { color: var(--text-muted); font-size: 11px; min-width: 78px; }
+.infrap-score-track {
+  flex: 1;
+  max-width: 160px;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.infrap-score-fill { display: block; height: 100%; }
+.infrap-score-val { font-weight: 600; font-size: 11px; }
+.infrap-obs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.infrap-obs-chip {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+.infrap-obs-snr { color: var(--text-muted); }
+.infrap-links { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; }
+.infrap-links a { color: var(--link-color); text-decoration: none; }
+.infrap-empty { padding: 32px; text-align: center; }
+.infrap-empty pre {
+  display: inline-block;
+  padding: 8px 14px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .infrap { padding: 10px; }
+  .infrap-cards { grid-template-columns: 1fr; }
+  .infrap-map { height: 200px; }
 }
 
 /* Forced-colors / Windows High Contrast — degrade gracefully (audit item 7). */

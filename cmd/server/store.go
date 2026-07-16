@@ -8854,10 +8854,18 @@ func (s *PacketStore) computeMultiByteCapability(adopterHashSizes map[string]int
 
 // --- Bulk Health (in-memory) ---
 
-func (s *PacketStore) GetBulkHealth(limit int, region, area string) []map[string]interface{} {
+// GetBulkHealth returns health stats for nodes. When pubkeys is non-empty
+// the result is scoped to exactly those nodes (case-insensitive exact
+// match; used by the infrastructure page to fetch its curated set in one
+// call) and region/area filters are ignored. Otherwise the most recently
+// heard `limit` nodes are returned, optionally region/area filtered.
+func (s *PacketStore) GetBulkHealth(limit int, region, area string, pubkeys []string) []map[string]interface{} {
 	var areaNodes map[string]bool
-	if area != "" {
+	if area != "" && len(pubkeys) == 0 {
 		areaNodes = s.resolveAreaNodes(area)
+	}
+	if len(pubkeys) > 0 {
+		region = ""
 	}
 
 	s.mu.RLock()
@@ -8895,7 +8903,23 @@ func (s *PacketStore) GetBulkHealth(limit int, region, area string) []map[string
 	if regionNodeKeys != nil || areaNodes != nil {
 		queryLimit = 10000
 	}
-	rows, err := s.db.conn.Query("SELECT public_key, name, role, lat, lon FROM nodes ORDER BY last_seen DESC LIMIT ?", queryLimit)
+	var rows *sql.Rows
+	var err error
+	if len(pubkeys) > 0 {
+		// Exact-pubkey scope: query only the requested rows (the recency
+		// ORDER BY + LIMIT path could miss nodes outside the top window).
+		placeholders := make([]string, len(pubkeys))
+		args := make([]interface{}, len(pubkeys))
+		for i, pk := range pubkeys {
+			placeholders[i] = "LOWER(?)"
+			args[i] = strings.TrimSpace(pk)
+		}
+		rows, err = s.db.conn.Query(
+			"SELECT public_key, name, role, lat, lon FROM nodes WHERE LOWER(public_key) IN ("+
+				strings.Join(placeholders, ",")+") ORDER BY last_seen DESC", args...)
+	} else {
+		rows, err = s.db.conn.Query("SELECT public_key, name, role, lat, lon FROM nodes ORDER BY last_seen DESC LIMIT ?", queryLimit)
+	}
 	if err != nil {
 		return []map[string]interface{}{}
 	}

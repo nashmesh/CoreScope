@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -75,6 +77,74 @@ func TestInfrastructureFlagExposedOnNodeReads(t *testing.T) {
 	}
 	if len(results) != 1 || results[0]["infrastructure"] != true {
 		t.Errorf("SearchNodes: want 1 result with infrastructure=true, got %v", results)
+	}
+}
+
+// TestBulkHealthNodesParam covers the ?nodes= exact-pubkey scope on
+// /api/nodes/bulk-health (#infra): the infrastructure page fetches health
+// for its curated set in one call. Asserts exact scoping (only requested
+// nodes return), case-insensitive matching, recency-window bypass (an
+// ancient node still returns when requested), the BulkHealthMax-derived
+// cap, and that the blacklist filter still applies.
+func TestBulkHealthNodesParam(t *testing.T) {
+	srv, router := setupTestServer(t)
+
+	insert := func(pk, name, lastSeen string) {
+		t.Helper()
+		if _, err := srv.db.conn.Exec(`INSERT INTO nodes
+			(public_key, name, role, lat, lon, last_seen, first_seen, advert_count)
+			VALUES (?, ?, 'repeater', 1, 1, ?, ?, 5)`, pk, name, lastSeen, lastSeen); err != nil {
+			t.Fatalf("insert %s: %v", pk, err)
+		}
+	}
+	insert("aaaa000011112222", "Infra One", "2026-07-01T00:00:00Z")
+	insert("bbbb000011112222", "Infra Two", "2020-01-01T00:00:00Z") // ancient — outside any recency window
+	insert("cccc000011112222", "Not Requested", "2026-07-02T00:00:00Z")
+
+	get := func(url string) []map[string]interface{} {
+		t.Helper()
+		req := httptest.NewRequest("GET", url, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("GET %s: status=%d body=%s", url, w.Code, w.Body.String())
+		}
+		var arr []map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &arr); err != nil {
+			t.Fatalf("GET %s: bad JSON: %v", url, err)
+		}
+		return arr
+	}
+	keys := func(arr []map[string]interface{}) map[string]bool {
+		out := map[string]bool{}
+		for _, e := range arr {
+			if pk, ok := e["public_key"].(string); ok {
+				out[pk] = true
+			}
+		}
+		return out
+	}
+
+	// Exact scope + case-insensitive + whitespace tolerated + ancient node included.
+	got := keys(get("/api/nodes/bulk-health?limit=50&nodes=AAAA000011112222,%20bbbb000011112222"))
+	if len(got) != 2 || !got["aaaa000011112222"] || !got["bbbb000011112222"] {
+		t.Errorf("nodes= scope: want exactly {aaaa…, bbbb…}, got %v", got)
+	}
+	if got["cccc000011112222"] {
+		t.Error("nodes= scope leaked an unrequested node")
+	}
+
+	// Cap: limit=1 truncates the requested set.
+	if arr := get("/api/nodes/bulk-health?limit=1&nodes=aaaa000011112222,bbbb000011112222"); len(arr) != 1 {
+		t.Errorf("nodes= cap: want 1 result at limit=1, got %d", len(arr))
+	}
+
+	// Blacklist still filters scoped results.
+	srv.cfg.NodeBlacklist = []string{"aaaa000011112222"}
+	srv.cfg.SetNodeBlacklist(srv.cfg.NodeBlacklist)
+	got = keys(get("/api/nodes/bulk-health?limit=50&nodes=aaaa000011112222,bbbb000011112222"))
+	if got["aaaa000011112222"] || !got["bbbb000011112222"] {
+		t.Errorf("nodes= + blacklist: want only bbbb…, got %v", got)
 	}
 }
 

@@ -111,6 +111,75 @@ assert(/a\.status === 'stale' \? -1 : 1/.test(nodesSrc),
 assert(/aria-expanded/.test(nodesSrc),
   'panel header exposes aria-expanded');
 
+console.log('\n=== infrastructure.js: dedicated page ===');
+
+const infraPageSrc = fs.readFileSync(path.join(__dirname, 'public', 'infrastructure.js'), 'utf8');
+const indexSrc = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+const navDrawerSrc = fs.readFileSync(path.join(__dirname, 'public', 'nav-drawer.js'), 'utf8');
+const bottomNavSrc = fs.readFileSync(path.join(__dirname, 'public', 'bottom-nav.js'), 'utf8');
+
+assert(/registerPage\('infrastructure',\s*\{\s*init,\s*destroy\s*\}\)/.test(infraPageSrc),
+  'infrastructure.js registers the page module');
+// Perf contract: exactly two data sources — fetchAllNodes + scoped bulk-health.
+assert(/fetchAllNodes\(/.test(infraPageSrc) && /bulk-health\?limit=.*&nodes=/.test(infraPageSrc),
+  'page loads via fetchAllNodes + scoped bulk-health');
+{
+  const apiCalls = infraPageSrc.match(/\bapi\('[^']+/g) || [];
+  assert(apiCalls.length === 1 && /bulk-health/.test(apiCalls[0]),
+    `page makes exactly one api() call (scoped bulk-health); got ${JSON.stringify(apiCalls)}`);
+}
+assert(/sa === 'stale' \? -1 : 1/.test(infraPageSrc),
+  'page sorts stale infra nodes first');
+assert(/\/analytics"/.test(infraPageSrc) && /\/reach"/.test(infraPageSrc),
+  'cards link to node analytics + reach (history stays one click away)');
+assert(/el\.hidden = false;[\s\S]{0,300}L\.map\(/.test(infraPageSrc),
+  'map container un-hidden BEFORE L.map() (Leaflet 0×0 init guard)');
+assert(/offWS\(wsHandler\)/.test(infraPageSrc) && /map\.remove\(\)/.test(infraPageSrc),
+  'destroy() releases WS handler and Leaflet map');
+
+// Wiring: script tag, top nav, and BOTH mobile navs (sync requirement).
+assert(/<script src="infrastructure\.js\?v=__BUST__"/.test(indexSrc),
+  'index.html loads infrastructure.js with cache buster');
+assert(/data-route="infrastructure"/.test(indexSrc),
+  'top nav links #/infrastructure');
+assert(/route:\s*'infrastructure'/.test(navDrawerSrc),
+  'nav-drawer ROUTES includes infrastructure');
+assert(/route:\s*'infrastructure'/.test(bottomNavSrc),
+  'bottom-nav MORE_ROUTES includes infrastructure');
+assert(/infra-panel-viewall/.test(nodesSrc) && /#\/infrastructure/.test(nodesSrc),
+  'nodes-page panel links View all → #/infrastructure');
+assert(!/<button[^>]*class="infra-panel-header"[\s\S]{0,400}<a /.test(nodesSrc),
+  'View-all link is NOT nested inside the header <button> (invalid HTML + double-fire)');
+
+// InfraSummary functional check in a vm sandbox.
+{
+  const m = infraPageSrc.match(/window\.InfraSummary\s*=\s*\{[\s\S]*?\n\};/);
+  assert(!!m, 'InfraSummary extractable');
+  if (m) {
+    const sandbox = {
+      window: {
+        getNodeStatus: (role, lastMs) => (Date.now() - lastMs < 86400000 ? 'active' : 'stale'),
+      },
+      Date: Date,
+      Array: Array,
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(m[0], sandbox);
+    const now = new Date().toISOString();
+    const old = new Date(Date.now() - 30 * 86400000).toISOString();
+    const s = sandbox.window.InfraSummary.compute([
+      { name: 'Fresh', role: 'repeater', last_seen: now, relay_active: true },
+      { name: 'Silent', role: 'repeater', last_seen: old },
+    ]);
+    assert(s.total === 2 && s.active === 1 && s.stale === 1 && s.relaying === 1,
+      `summary counts: got ${JSON.stringify(s)}`);
+    assert(s.oldestSilent && s.oldestSilent.name === 'Silent',
+      'oldestSilent identifies the longest-silent node');
+    const empty = sandbox.window.InfraSummary.compute([]);
+    assert(empty.total === 0 && empty.oldestSilent === null, 'empty list → zero counts');
+  }
+}
+
 console.log('\n=== style.css: accent vars + classes ===');
 
 assert(/--mc-infra:\s*#E69F00/i.test(cssSrc),

@@ -1329,12 +1329,15 @@
     }).join('');
 
     el.innerHTML = `<div class="infra-panel">
-      <button class="infra-panel-header" aria-expanded="${!collapsed}" aria-controls="infraCards">
-        <span class="badge infra-badge" title="${window.INFRA_BADGE_TITLE}">INFRA</span>
-        <strong>Infrastructure</strong>
-        <span class="infra-panel-summary">${activeCount}/${withStatus.length} active</span>
-        <svg class="ph-icon infra-panel-chevron" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#${collapsed ? 'ph-caret-down' : 'ph-caret-up'}"/></svg>
-      </button>
+      <div class="infra-panel-bar">
+        <button class="infra-panel-header" aria-expanded="${!collapsed}" aria-controls="infraCards">
+          <span class="badge infra-badge" title="${window.INFRA_BADGE_TITLE}">INFRA</span>
+          <strong>Infrastructure</strong>
+          <span class="infra-panel-summary">${activeCount}/${withStatus.length} active</span>
+          <svg class="ph-icon infra-panel-chevron" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#${collapsed ? 'ph-caret-down' : 'ph-caret-up'}"/></svg>
+        </button>
+        <a href="#/infrastructure" class="infra-panel-viewall" title="Open the Infrastructure page">View all →</a>
+      </div>
       <div class="infra-cards" id="infraCards"${collapsed ? ' hidden' : ''}>${cards}</div>
     </div>`;
 

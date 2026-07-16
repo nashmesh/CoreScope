@@ -1557,10 +1557,26 @@ func (s *Server) handleNodeHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBulkHealth(w http.ResponseWriter, r *http.Request) {
 	lim := queryLimit(r, 50, s.cfg.ListLimits.BulkHealthMax)
 
+	// Optional exact-pubkey scope (#infra): ?nodes=pk1,pk2,… returns health
+	// for exactly those nodes in one call (the infrastructure page's curated
+	// set). Capped by the same BulkHealthMax clamp as the limit path.
+	var pubkeys []string
+	if nodesParam := r.URL.Query().Get("nodes"); nodesParam != "" {
+		for _, pk := range strings.Split(nodesParam, ",") {
+			pk = strings.TrimSpace(pk)
+			if pk != "" {
+				pubkeys = append(pubkeys, pk)
+			}
+		}
+		if len(pubkeys) > lim {
+			pubkeys = pubkeys[:lim]
+		}
+	}
+
 	if s.store != nil {
 		region := r.URL.Query().Get("region")
 		area := r.URL.Query().Get("area")
-		results := s.store.GetBulkHealth(lim, region, area)
+		results := s.store.GetBulkHealth(lim, region, area, pubkeys)
 		// Filter blacklisted nodes + hidden-prefix nodes (#1181).
 		needsBlacklist := len(s.cfg.NodeBlacklist) > 0
 		needsHidden := len(s.cfg.HiddenNamePrefixes) > 0
