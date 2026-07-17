@@ -158,11 +158,13 @@
     var status = mbStatus || null;
     var glyph = status ? (MB_GLYPHS[status] || MB_GLYPHS.unknown) : '';
     var statusClass = status ? (' ' + (MB_STATUS_CLASS[status] || MB_STATUS_CLASS.unknown)) : '';
-    // Infrastructure (#infra): accent ring via CSS class (box-shadow).
-    if (isInfraNode) statusClass += ' mc-infra-label';
-    var ariaStatus = (isInfraNode ? 'infrastructure ' : '') +
-      (status ? ('multi-byte ' + status + ', hash ' + shortHash)
-              : ('repeater hash ' + shortHash));
+    var ariaStatus = status ? ('multi-byte ' + status + ', hash ' + shortHash)
+                            : ('repeater hash ' + shortHash);
+    // Infrastructure (#infra): accent ring via CSS class + aria prefix.
+    if (isInfraNode) {
+      statusClass += ' mc-infra-label';
+      ariaStatus = 'infrastructure ' + ariaStatus;
+    }
     // Observer indicator stays a star — it is an orthogonal signal, not a status color.
     var obsIndicator = isAlsoObserver
       ? ' <span aria-hidden="true" style="color:' + (ROLE_COLORS.observer || '#f1c40f') + ';font-size:13px;line-height:1;" title="Also an observer"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-star-fill"/></svg></span>'
