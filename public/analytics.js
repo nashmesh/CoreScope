@@ -2706,6 +2706,25 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _analyticsData =
   let _ngState = null; // neighbor graph state
 
   async function renderNeighborGraphTab(el) {
+    // Preserve filter state across re-renders. This whole tab is rebuilt by
+    // renderTab() on `theme-refresh` (dispatched ~300ms after the async
+    // /api/config/theme fetch settles, or on any theme/timestamp change).
+    // Without this snapshot a re-render silently resets the operator's
+    // role/confidence selections to defaults — and re-flips the >1000-node
+    // skip guard against the full graph (the #1758 e2e flake: the late
+    // theme-refresh landed mid-test and resurrected #ngSkipMsg).
+    // Min-score already persists via localStorage ('ng-min-score').
+    var prevRoleChecks = null;
+    var prevConfidence = null;
+    var prevRcEl = document.getElementById('ngRoleChecks');
+    if (prevRcEl) {
+      prevRoleChecks = {};
+      prevRcEl.querySelectorAll('input[data-role]').forEach(function (cb) {
+        prevRoleChecks[cb.dataset.role] = cb.checked;
+      });
+      var prevConfEl = document.getElementById('ngConfidence');
+      if (prevConfEl) prevConfidence = prevConfEl.value;
+    }
     el.innerHTML = `
       <div class="analytics-card" id="ngCard">
         <h3><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-graph"/></svg> Neighbor Graph</h3>
@@ -2749,6 +2768,19 @@ function destroy() { _stopRolesRefresh(); _stopScopesRefresh(); _analyticsData =
     // Observer checkbox — unchecked by default (observers create hub-and-spoke noise)
     {
       rcEl.innerHTML += `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-role="observer"> <span class="role-swatch role-swatch--observer">observer</span></label>`;
+    }
+
+    // Restore the pre-rebuild filter state (see snapshot at function top)
+    // BEFORE applyNGFilters() runs, so the re-render is idempotent.
+    if (prevRoleChecks) {
+      rcEl.querySelectorAll('input[data-role]').forEach(function (cb) {
+        if (Object.prototype.hasOwnProperty.call(prevRoleChecks, cb.dataset.role)) {
+          cb.checked = prevRoleChecks[cb.dataset.role];
+        }
+      });
+      if (prevConfidence !== null) {
+        document.getElementById('ngConfidence').value = prevConfidence;
+      }
     }
 
     // Load data

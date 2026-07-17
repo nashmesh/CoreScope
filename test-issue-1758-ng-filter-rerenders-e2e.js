@@ -204,6 +204,34 @@ function buildFixture() {
   if (reFiltered.canvasDisplay === 'none') fail('second filter-down: expected #ngCanvas visible again');
   console.log('  ✓ second filter-down: render restored across repeated cycles');
 
+  // --- theme-refresh re-render must PRESERVE filter state.
+  // renderTab() re-runs renderNeighborGraphTab() on `theme-refresh` — which
+  // fires ~300ms after the async /api/config/theme fetch settles (slow on CI
+  // warmup) or on any theme/timestamp toggle. Before the fix, the rebuild
+  // re-checked every role box and rebuilt _ngState from the FULL graph,
+  // resurrecting #ngSkipMsg out from under the operator (this was the exact
+  // CI flake: the late theme-refresh landed between the filter assertions).
+  // Dispatch it explicitly so the race is deterministic, not timing-dependent.
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('theme-refresh')));
+  // renderNeighborGraphTab is async (awaits the graph API — served instantly
+  // by our route intercept); give it a beat to settle.
+  await page.waitForTimeout(500);
+  const afterTheme = await page.evaluate(() => {
+    const canvas = document.getElementById('ngCanvas');
+    const cb = document.querySelector('#ngRoleChecks input[data-role="companion"]');
+    return {
+      hasSkip: !!document.getElementById('ngSkipMsg'),
+      canvasDisplay: canvas ? getComputedStyle(canvas).display : '(no canvas)',
+      companionChecked: cb ? cb.checked : '(no checkbox)',
+    };
+  });
+  if (afterTheme.companionChecked !== false) {
+    fail(`theme-refresh re-render: companion checkbox must stay unchecked, got ${afterTheme.companionChecked}`);
+  }
+  if (afterTheme.hasSkip) fail('theme-refresh re-render: #ngSkipMsg must not resurface (filters preserved)');
+  if (afterTheme.canvasDisplay === 'none') fail('theme-refresh re-render: #ngCanvas must stay visible');
+  console.log('  ✓ theme-refresh re-render preserves filter state (no skip-msg resurrection)');
+
   await browser.close();
 
   console.log('\nPASS: #1758 neighbor-graph filter re-render lifecycle holds');
