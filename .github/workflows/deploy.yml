@@ -605,15 +605,19 @@ jobs:
           echo "Built Go staging image ✅"
 
       - name: Set up Docker Buildx
-        if: github.event_name == 'push'
+        # Publish on push AND workflow_dispatch — the release fast-path
+        # fallback dispatches this workflow against tag refs, and gating on
+        # push-only silently skipped every GHCR step (v4.0.2 released nothing).
+        # Only pull_request runs must stop short of publishing.
+        if: github.event_name != 'pull_request'
         uses: docker/setup-buildx-action@v3
 
       - name: Set up QEMU (arm64 runtime stage)
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: docker/setup-qemu-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -621,7 +625,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         id: docker-meta
         uses: docker/metadata-action@v5
         with:
@@ -637,7 +641,7 @@ jobs:
             type=edge,branch=master
 
       - name: Build and push to GHCR
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
