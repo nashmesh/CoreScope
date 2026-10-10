@@ -1,4 +1,4 @@
-# CUSTOMIZATION-PLAN.md — White-Label / Multi-Instance Theming
+# Customization Plan — White-Label / Multi-Instance Theming
 
 ## Status: Phase 1 Complete (v2.6.0+)
 

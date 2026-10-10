@@ -84,7 +84,7 @@ After each run, the qa-engineer reports false positives / brittleness; the human
 
 ## Brevity (with clarity)
 
-Default to short. Long is the exception, justified by content. See [`../../personas/orchestrator.md`](../../personas/orchestrator.md#brevity-with-clarity) for the canonical rules.
+Default to short. Long is the exception, justified by content. See [`../personas/orchestrator.md`](../personas/orchestrator.md#brevity-with-clarity) for the canonical rules.
 
 **Limits for artifacts this skill produces**
 - The qa-engineer's posted report follows the format in `personas/qa-engineer.md` — that format is the limit. Don't expand.

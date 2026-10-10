@@ -205,7 +205,7 @@ This fixes inflated packet counts across the entire app and enables proper "1 tr
 1. Remove dual-write from `insertPacket()`
 2. Drop `packets_backup` table (after confirming everything works for 1+ week)
 3. Remove `?legacy=1` support if unused
-4. Update DEDUP-DESIGN.md → mark as complete
+4. Update [the dedup design](../design/dedup-design.md) → mark as complete
 5. VACUUM the database
 6. Tag release (v2.3.0?)
 

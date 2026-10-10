@@ -9,6 +9,7 @@ config.json
 *.bak
 benchmark*.sh
 benchmark*.js
-PERFORMANCE.md
+# Historical performance reports are documentation, not image inputs.
+docs/archive/performance/
 docs/
 .gitignore

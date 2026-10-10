@@ -23,7 +23,8 @@ The Go backend serves all 40+ API endpoints from an in-memory packet store with 
 | Channel decryption | **AES-128-ECB** with rainbow table |
 | GOMEMLIMIT (memory-constrained hosts) | **set to ≥1.5× working set** (e.g. 1536 MiB on a 2 GB Pi for a ~1 GB store). Lower values trigger a GC death-spiral. Configure via the `GOMEMLIMIT` env var or `runtime.maxMemoryMB` in `config.json`; env wins. Applies to both server and ingestor. See [#1010](https://github.com/Kpa-clawbot/CoreScope/issues/1010). |
 
-See [PERFORMANCE.md](PERFORMANCE.md) for full benchmarks.
+See the archived [v2.1 performance report](docs/archive/performance/v2.1.0.md)
+for the historical benchmark methodology and results.
 
 ## ✨ Features
 
@@ -241,27 +242,36 @@ corescope/
 │   └── entrypoint-go.sh     # Container entrypoint
 ├── Dockerfile               # Multi-stage Go build + Alpine runtime
 ├── config.example.json      # Example configuration
-├── test-*.js                # Node.js test suite (frontend + legacy)
-└── tools/                   # Generators, E2E tests, utilities
+├── tests/                   # Manifest-backed unit, integration, and E2E tests
+├── scripts/tests/           # Test manifest validator and canonical runner
+└── tools/                   # Generators and utilities
 ```
 
 ## For Developers
 
 ### Test Suite
 
-**380 Go tests** covering the backend, plus **150+ Node.js tests** for the frontend and legacy logic, plus **49 Playwright E2E tests** for browser validation.
-
 ```bash
-# Go backend tests
-cd cmd/server && go test ./... -v
-cd cmd/ingestor && go test ./... -v
+# Validate the tracked test inventory and runner
+npm run test:manifest
 
-# Node.js frontend + integration tests
+# Canonical local test/coverage entry point
 npm test
 
-# Playwright E2E (requires running server on localhost:3000)
-node tests/e2e/test-e2e-playwright.js
+# Focused manifest profiles
+npm run test:unit
+npm run test:integration
+npm run test:e2e
+npm run test:audit:all-active   # list the broader active inventory
+
+# Go modules
+(cd cmd/server && go test ./...)
+(cd cmd/ingestor && go test ./...)
 ```
+
+Browser/E2E profiles require the documented local server and fixture setup.
+See `tests/manifest.json` for each runner's suite, status, requirements, and
+exact command.
 
 ### Generate Test Data
 

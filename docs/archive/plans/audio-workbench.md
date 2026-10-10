@@ -1,4 +1,4 @@
-# AUDIO-WORKBENCH.md — Sound Shaping & Debug Interface
+# Audio Workbench — Sound Shaping & Debug Interface
 
 ## Problem
 
