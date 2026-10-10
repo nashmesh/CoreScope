@@ -446,7 +446,7 @@
     // desktop the .mc-collapsed class has no visual effect (CSS only hides
     // section bodies inside the mobile media query) so all controls stay
     // visible — but single-open behaviour is still tracked for state
-    // consistency. See test-issue-1329-map-controls-accordion-e2e.js.
+    // consistency. See tests/e2e/test-issue-1329-map-controls-accordion-e2e.js.
     (function initMapControlsAccordion() {
       const isMobile = window.innerWidth <= 640;
       const sections = Array.from(controlsPanel.querySelectorAll('fieldset.mc-section'));

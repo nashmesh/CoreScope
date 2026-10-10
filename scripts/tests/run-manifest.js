@@ -65,38 +65,46 @@ function parseArguments(argv, validProfiles = []) {
   return options;
 }
 
-function selectTests(manifest, options, profiles = {}) {
+function selectTests(manifest, options, profiles = {}, relocations = {}) {
   const suites = new Set(options.suites);
   const statuses = new Set(options.statuses);
-  let profilePaths = null;
+  let profileTests = null;
   if (options.profile) {
     const paths = profiles[options.profile];
     if (!Array.isArray(paths)) throw new Error(`invalid profile: ${options.profile}`);
     if (new Set(paths).size !== paths.length) {
       throw new Error(`profile ${options.profile} contains duplicate paths`);
     }
+    const resolvedPaths = paths.map(testPath => relocations[testPath] || testPath);
+    if (new Set(resolvedPaths).size !== resolvedPaths.length) {
+      throw new Error(`profile ${options.profile} resolves duplicate destination`);
+    }
     const manifestByPath = new Map(manifest.tests.map(item => [item.path, item]));
-    for (const testPath of paths) {
+    profileTests = [];
+    for (let index = 0; index < paths.length; index++) {
+      const frozenPath = paths[index];
+      const testPath = resolvedPaths[index];
       const item = manifestByPath.get(testPath);
-      if (!item) throw new Error(`profile ${options.profile} references missing test: ${testPath}`);
+      if (!item) throw new Error(`profile ${options.profile} references missing test: ${frozenPath}`);
       if (item.status !== 'active') {
         throw new Error(`profile ${options.profile} references non-active test: ${testPath}`);
       }
       if (item.orchestration) {
         throw new Error(`profile ${options.profile} references orchestration test: ${testPath}`);
       }
+      profileTests.push(item);
     }
-    profilePaths = new Set(paths);
   }
-  return manifest.tests
+  const candidates = profileTests || manifest.tests;
+  const selected = candidates
     .filter(item =>
       !item.orchestration &&
-      (!profilePaths || profilePaths.has(item.path)) &&
       suites.has(item.suite) &&
       statuses.has(item.status)
-    )
-    .slice()
-    .sort((left, right) => left.path.localeCompare(right.path));
+    );
+  return profileTests
+    ? selected
+    : selected.slice().sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function defaultResolvePackage(packageName, repoRoot) {
@@ -204,7 +212,7 @@ function main() {
     if (validationErrors.length) {
       throw new Error(`manifest validation failed:\n${validationErrors.map(error => `- ${error}`).join('\n')}`);
     }
-    const tests = selectTests(manifest, options, profiles);
+    const tests = selectTests(manifest, options, profiles, inventory.relocations);
     return dispatchTests(tests, options, {
       repoRoot,
       environment: process.env,

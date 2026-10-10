@@ -212,7 +212,7 @@ We intentionally diverge from Wireshark where their syntax is verbose or require
 
 ## Testing
 
-### Unit tests (add to `test-packet-filter.js`)
+### Unit tests (add to `tests/unit/test-packet-filter.js`)
 
 ```js
 // Absolute time

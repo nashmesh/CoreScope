@@ -5,7 +5,16 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { validateManifest } = require('./validate-manifest');
+
+const STATUS_SURFACES_FOR_TEST = [
+  'package.json',
+  'test-all.sh',
+  '.github/workflows/deploy.yml',
+  'AGENTS.md',
+  'README.md',
+];
 
 let passed = 0;
 let failed = 0;
@@ -221,10 +230,133 @@ test('rejects both slash types in manifest paths', () => {
     manifest.tests[0].command = ['node', invalidPath];
     const errors = errorsFor(manifest, repoRoot, [invalidPath]);
     assert(
-      errors.some(error => error.includes('root-level test*.js or test*.sh path')),
+      errors.some(error => error.includes('root-level compatibility test')),
       `expected rejection for ${invalidPath}; got ${errors.join('; ')}`
     );
   }
+});
+
+test('discovers direct test files in supported suite directories', () => {
+  const { trackedRootTests } = require('./validate-manifest');
+  const { repoRoot } = fixture();
+  for (const suite of ['unit', 'integration', 'e2e']) {
+    fs.mkdirSync(path.join(repoRoot, 'tests', suite), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'tests', suite, `test-${suite}.js`), 'process.exit(0);\n');
+  }
+  fs.mkdirSync(path.join(repoRoot, 'tests', 'unit', 'nested'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, 'tests', 'unit', 'nested', 'test-too-deep.js'), 'process.exit(0);\n');
+  execFileSync('git', ['init', '-q'], { cwd: repoRoot });
+  execFileSync('git', ['add', 'test-example.js', 'tests'], { cwd: repoRoot });
+  assert.deepStrictEqual(trackedRootTests(repoRoot), [
+    'test-example.js',
+    'tests/e2e/test-e2e.js',
+    'tests/integration/test-integration.js',
+    'tests/unit/test-unit.js',
+  ]);
+});
+
+test('accepts a frozen identity relocated to its matching suite directory', () => {
+  const { repoRoot, manifest } = fixture();
+  fs.mkdirSync(path.join(repoRoot, 'tests', 'unit'), { recursive: true });
+  fs.renameSync(
+    path.join(repoRoot, 'test-example.js'),
+    path.join(repoRoot, 'tests', 'unit', 'test-example.js')
+  );
+  manifest.tests[0] = entry({
+    path: 'tests/unit/test-example.js',
+    command: ['node', 'tests/unit/test-example.js'],
+    classificationEvidence: [{
+      source: 'tests/unit/test-example.js',
+      detail: 'runs isolated assertions with no external service',
+    }],
+  });
+  const frozenInventory = {
+    profiles: { local: ['test-example.js'] },
+    relocations: { 'test-example.js': 'tests/unit/test-example.js' },
+    orchestration: new Set(),
+    capturedPaths: new Set(['test-example.js']),
+    references: new Map([
+      ['package.json', new Set()],
+      ['test-all.sh', new Set(['test-example.js'])],
+      ['.github/workflows/deploy.yml', new Set()],
+      ['AGENTS.md', new Set()],
+      ['README.md', new Set()],
+    ]),
+  };
+  assert.deepStrictEqual(errorsFor(
+    manifest,
+    repoRoot,
+    ['tests/unit/test-example.js'],
+    { frozenInventory }
+  ), []);
+});
+
+test('rejects missing duplicate and wrong-suite relocation destinations', () => {
+  const { repoRoot, manifest } = fixture();
+  fs.mkdirSync(path.join(repoRoot, 'tests', 'unit'), { recursive: true });
+  fs.mkdirSync(path.join(repoRoot, 'tests', 'integration'), { recursive: true });
+  fs.writeFileSync(path.join(repoRoot, 'tests', 'unit', 'test-one.js'), 'process.exit(0);\n');
+  fs.writeFileSync(path.join(repoRoot, 'tests', 'integration', 'test-two.js'), 'process.exit(0);\n');
+  manifest.tests = [
+    entry({ path: 'tests/unit/test-one.js', command: ['node', 'tests/unit/test-one.js'] }),
+    entry({ path: 'tests/integration/test-two.js', command: ['node', 'tests/integration/test-two.js'] }),
+  ];
+  const baseInventory = {
+    profiles: { local: ['test-example.js', 'test-other.js'] },
+    relocations: {},
+    orchestration: new Set(),
+    capturedPaths: new Set(['test-example.js', 'test-other.js']),
+    references: new Map(STATUS_SURFACES_FOR_TEST.map(surface => [
+      surface,
+      surface === 'test-all.sh' ? new Set(['test-example.js', 'test-other.js']) : new Set(),
+    ])),
+  };
+  let errors = errorsFor(manifest, repoRoot,
+    ['tests/unit/test-one.js', 'tests/integration/test-two.js'], { frozenInventory: baseInventory });
+  assert(errors.some(error => error.includes('unresolved frozen identity: test-example.js')));
+
+  baseInventory.relocations = {
+    'test-example.js': 'tests/unit/test-one.js',
+    'test-other.js': 'tests/unit/test-one.js',
+  };
+  errors = errorsFor(manifest, repoRoot,
+    ['tests/unit/test-one.js', 'tests/integration/test-two.js'], { frozenInventory: baseInventory });
+  assert(errors.some(error => error.includes('duplicate relocation destination')));
+
+  baseInventory.relocations = {
+    'test-example.js': 'tests/integration/test-two.js',
+    'test-other.js': 'tests/unit/test-one.js',
+  };
+  errors = errorsFor(manifest, repoRoot,
+    ['tests/unit/test-one.js', 'tests/integration/test-two.js'], { frozenInventory: baseInventory });
+  assert(errors.some(error => error.includes('relocation destination suite integration does not match manifest suite unit')));
+});
+
+test('rejects relocation traversal symlinks and non-frozen sources', () => {
+  const { repoRoot, manifest } = fixture();
+  const frozenInventory = {
+    profiles: { local: ['test-example.js'] },
+    relocations: { 'tests/unit/not-frozen.js': '../test-example.js' },
+    orchestration: new Set(),
+    capturedPaths: new Set(['test-example.js']),
+    references: new Map(STATUS_SURFACES_FOR_TEST.map(surface => [
+      surface,
+      surface === 'test-all.sh' ? new Set(['test-example.js']) : new Set(),
+    ])),
+  };
+  let errors = errorsFor(manifest, repoRoot, ['test-example.js'], { frozenInventory });
+  assert(errors.some(error => error.includes('relocation source must be a frozen root test identity')));
+  assert(errors.some(error => error.includes('relocation destination must be a supported test path')));
+
+  fs.mkdirSync(path.join(repoRoot, 'tests', 'unit'), { recursive: true });
+  fs.symlinkSync(path.join(repoRoot, 'test-example.js'), path.join(repoRoot, 'tests', 'unit', 'test-link.js'));
+  manifest.tests[0] = entry({
+    path: 'tests/unit/test-link.js',
+    command: ['node', 'tests/unit/test-link.js'],
+  });
+  frozenInventory.relocations = { 'test-example.js': 'tests/unit/test-link.js' };
+  errors = errorsFor(manifest, repoRoot, ['tests/unit/test-link.js'], { frozenInventory });
+  assert(errors.some(error => error.includes('regular file directly under its supported test directory')));
 });
 
 test('rejects non-regular files and symlinks as test paths', () => {
@@ -233,7 +365,7 @@ test('rejects non-regular files and symlinks as test paths', () => {
   manifest.tests[0].path = 'test-directory.js';
   manifest.tests[0].command = ['node', 'test-directory.js'];
   let errors = errorsFor(manifest, repoRoot, ['test-directory.js']);
-  assert(errors.some(error => error.includes('regular file directly under repoRoot')));
+  assert(errors.some(error => error.includes('regular file directly under its supported test directory')));
 
   const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-outside-'));
   fs.writeFileSync(path.join(outsideRoot, 'outside.js'), 'process.exit(0);\n');
@@ -241,7 +373,7 @@ test('rejects non-regular files and symlinks as test paths', () => {
   manifest.tests[0].path = 'test-link.js';
   manifest.tests[0].command = ['node', 'test-link.js'];
   errors = errorsFor(manifest, repoRoot, ['test-link.js']);
-  assert(errors.some(error => error.includes('regular file directly under repoRoot')));
+  assert(errors.some(error => error.includes('regular file directly under its supported test directory')));
 });
 
 test('rejects non-e2e suites and false evidence for Playwright sources', () => {
@@ -542,16 +674,16 @@ test('requires repository integration runners to retain behavior-based classific
       activeContent: JSON.stringify({ scripts: { test: 'sh test-all.sh' } }),
     },
     {
-      path: 'test-e2e-badge-aggregate.sh',
+      path: 'tests/integration/test-e2e-badge-aggregate.sh',
       source: '#!/bin/sh\naggregator="scripts/aggregate-e2e-pass.sh"\n"$aggregator" test-fixtures/e2e-output-sample.txt\n',
-      command: ['sh', 'test-e2e-badge-aggregate.sh'],
+      command: ['sh', 'tests/integration/test-e2e-badge-aggregate.sh'],
     },
     {
-      path: 'test-preflight-xss-gate.js',
+      path: 'tests/integration/test-preflight-xss-gate.js',
       source: "const { spawnSync } = require('child_process');\nspawnSync('bash', ['scripts/check-xss-sinks.sh', 'testdata/preflight-xss/bad.js']);\n",
-      command: ['node', 'test-preflight-xss-gate.js'],
+      command: ['node', 'tests/integration/test-preflight-xss-gate.js'],
       activeSurface: 'test-all.sh',
-      activeContent: 'node test-preflight-xss-gate.js\n',
+      activeContent: 'node tests/integration/test-preflight-xss-gate.js\n',
     },
     {
       path: 'test-tool-wrapper.js',
@@ -572,7 +704,9 @@ test('requires repository integration runners to retain behavior-based classific
 
   for (const testCase of cases) {
     const { repoRoot, manifest } = fixture();
-    fs.writeFileSync(path.join(repoRoot, testCase.path), testCase.source);
+    const testPath = path.join(repoRoot, testCase.path);
+    fs.mkdirSync(path.dirname(testPath), { recursive: true });
+    fs.writeFileSync(testPath, testCase.source);
     manifest.tests[0] = entry({
       path: testCase.path,
       suite: 'unit',
@@ -655,6 +789,21 @@ test('wires manifest validation and canonical suites into npm, the local wrapper
   assert(workflow.includes('npm run test:manifest'));
   assert(workflow.includes('npm run test:ci'));
   assert(workflow.includes('npm run test:ci:e2e'));
+});
+
+test('repository-root helper is independent of launch cwd', () => {
+  const repoRoot = path.resolve(__dirname, '../..');
+  const helperPath = path.join(repoRoot, 'tests', 'helpers', 'repository-root.js');
+  const launchCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'repository-root-cwd-'));
+  const output = execFileSync(process.execPath, [
+    '-e',
+    `const helper = require(${JSON.stringify(helperPath)}); ` +
+      `process.stdout.write(JSON.stringify([helper.repositoryRoot, helper.fromRepositoryRoot('public', 'app.js')]));`,
+  ], { cwd: launchCwd, encoding: 'utf8' });
+  assert.deepStrictEqual(JSON.parse(output), [
+    repoRoot,
+    path.join(repoRoot, 'public', 'app.js'),
+  ]);
 });
 
 test('accepts the checked-in manifest and all tracked root test runners', () => {

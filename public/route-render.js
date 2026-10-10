@@ -20,7 +20,7 @@
  * Animations gate on `prefers-reduced-motion`; high-contrast / forced-colors
  * mode is handled by CSS.
  *
- * See test-issue-1374-route-map-a11y-e2e.js for the contract.
+ * See tests/e2e/test-issue-1374-route-map-a11y-e2e.js for the contract.
  */
 (function () {
   'use strict';

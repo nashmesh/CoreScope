@@ -2,7 +2,7 @@
 // Visits every page and exercises key UI interactions across 7 parallel browser contexts.
 // Merges coverage JSONs at the end. Target: < 2 minutes.
 //
-// Skips interactions already covered by E2E tests (test-e2e-playwright.js):
+// Skips interactions already covered by E2E tests (tests/e2e/test-e2e-playwright.js):
 //   - Assertions on page load, data presence, column headers
 //   - Compare page (fully covered by E2E)
 //   - Audio Lab page (fully covered by E2E)

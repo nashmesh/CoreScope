@@ -120,7 +120,7 @@ Allow users to assign custom highlight colors to specific hash channels. Colors 
 
 | Level | What | How |
 |-------|------|-----|
-| Unit | Storage CRUD, color lookup, merge with defaults | `test-frontend-helpers.js` via `vm.createContext` |
+| Unit | Storage CRUD, color lookup, merge with defaults | `tests/unit/test-frontend-helpers.js` via `vm.createContext` |
 | Unit | Export/import round-trip with channel colors | Same |
 | E2E | Quick-assign popover, color applied to feed rows | Playwright against localhost |
 | E2E | Customizer channel colors section | Playwright |

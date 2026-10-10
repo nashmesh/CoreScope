@@ -502,7 +502,7 @@ print_dry_run() {
     log "+ instrument frontend into <temporary>/public-instrumented"
     if [ "$MODE" = customizer ]; then
       log "+ <temporary>/corescope-server -host 127.0.0.1 -port $port -db <temporary>/e2e-fixture.db -public <temporary>/public-instrumented -config-dir <temporary>/config -static-trace-file <temporary>/static-request-trace.jsonl"
-      log "+ BASE_URL=http://127.0.0.1:$port E2E_TEST_FILTER=^Customizer v2: node test-e2e-playwright.js"
+      log "+ BASE_URL=http://127.0.0.1:$port E2E_TEST_FILTER=^Customizer v2: node tests/e2e/test-e2e-playwright.js"
     else
       log "+ <temporary>/corescope-server -host 127.0.0.1 -port $port -db <temporary>/e2e-fixture.db -public <temporary>/public-instrumented -config-dir <temporary>/config -static-trace-file <temporary>/static-request-trace.jsonl"
       log "+ BASE_URL=http://127.0.0.1:$port node scripts/tests/run-manifest.js --profile ci-e2e-phase"
@@ -756,7 +756,7 @@ run_frontend_coverage() {
       BASE_URL="$base_url" \
       E2E_FAILURE_EVIDENCE_DIR="$FAILURE_EVIDENCE_DIR" \
       E2E_TEST_FILTER='^Customizer v2:' \
-      node test-e2e-playwright.js; then
+      node tests/e2e/test-e2e-playwright.js; then
       log "Customizer navigation diagnostic trace written to $FAILURE_EVIDENCE_DIR/static-request-trace.jsonl"
       return 0
     else

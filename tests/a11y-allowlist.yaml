@@ -34,4 +34,4 @@
 strict_unused: false
 
 # (issue #1715 entries removed by the dark-theme role-swatch fix — see
-#  test-a11y-1715-dark-role-swatches.js for the CSS-driven regression gate)
+#  tests/unit/test-a11y-1715-dark-role-swatches.js for the CSS-driven regression gate)

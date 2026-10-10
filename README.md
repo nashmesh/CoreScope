@@ -260,7 +260,7 @@ cd cmd/ingestor && go test ./... -v
 npm test
 
 # Playwright E2E (requires running server on localhost:3000)
-node test-e2e-playwright.js
+node tests/e2e/test-e2e-playwright.js
 ```
 
 ### Generate Test Data

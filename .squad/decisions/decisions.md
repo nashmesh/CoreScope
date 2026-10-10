@@ -307,7 +307,7 @@ Observation objects in in-memory packet store now store only `transmission_id` r
 **Date:** 2026-03-26  
 **Status:** Proposed — awaiting user sign-off before implementation
 
-Playwright E2E tests (16 tests in `test-e2e-playwright.js`) are slow in CI. Analysis identified ~40-50% potential runtime reduction.
+Playwright E2E tests (16 tests in `tests/e2e/test-e2e-playwright.js`) are slow in CI. Analysis identified ~40-50% potential runtime reduction.
 
 ### Recommendations (prioritized)
 

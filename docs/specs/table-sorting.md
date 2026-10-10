@@ -78,7 +78,7 @@ Custom comparators in `options.comparators` override built-in types.
 
 ### M1: Shared utility + packets table
 - Create `public/table-sort.js`
-- Unit tests: `test-table-sort.js` (Node.js, jsdom or vm.createContext)
+- Unit tests: `tests/unit/test-table-sort.js` (Node.js, jsdom or vm.createContext)
 - Integrate with packets table (highest impact — 30K rows, currently unsortable)
 - Default sort: time descending
 - Columns: all current packets columns (Region, Time, Hash, Size, HB, Type, Observer, Path, Rpt, Details)
@@ -116,7 +116,7 @@ Custom comparators in `options.comparators` override built-in types.
 
 ## Testing
 
-### Unit Tests (`test-table-sort.js`)
+### Unit Tests (`tests/unit/test-table-sort.js`)
 - Numeric sort ascending/descending
 - Text sort with localeCompare
 - Date sort

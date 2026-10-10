@@ -1118,7 +1118,7 @@ img.brand-logo {
 /* #1415 / #1458 / #1461 — mobile packets UX overhaul.
  * NOTE: hiding the first dt/dd pair below assumes Payload Type is the
  * first <dt> in .detail-meta (per packets.js renderDetail). Keep that
- * invariant — test-issue-1415-packets-layout.js asserts it. */
+ * invariant — tests/unit/test-issue-1415-packets-layout.js asserts it. */
 @media (max-width: 600px) {
   /* #1: kill empty chevron rail */
   #pktTable th.col-expand,
@@ -2475,7 +2475,7 @@ button.ch-item:hover .ch-icon-btn { opacity: 1; }
      the td and `table-layout: auto`, the cell's min-content becomes the
      full single-line text width, blowing past the `max-width: 100px`
      mobile hint. Rows then grow wider than the 360px viewport — which
-     breaks `test-gestures-1062-e2e.js` (a)/(h) because the swipe coords
+     breaks `tests/e2e/test-gestures-1062-e2e.js` (a)/(h) because the swipe coords
      fall outside the viewport and `elementFromPoint` no longer hits the
      row. Inline-block + fixed `max-width` on the clip caps the column's
      preferred width so the row stays viewport-bounded and gestures work. */
@@ -2870,7 +2870,7 @@ button.ch-item.ch-item-encrypted .ch-badge { filter: grayscale(0.6); }
    against page bg). Cell bgs need their own contrast budget vs #fff fg.
    taken:    #22c55e (2.28:1) -> #15803d (green-700, 5.02:1)
    possible: #eab308 (1.92:1) -> #854d0e (yellow-800, 6.85:1)
-   See test-issue-1668-m4-per-route.js hash-cell contrast block. */
+   See tests/unit/test-issue-1668-m4-per-route.js hash-cell contrast block. */
 .hash-cell-taken    { background: #15803d; color: #fff; font-size: 12px; font-weight: 700; }
 .hash-cell-possible { background: #854d0e; color: #fff; font-size: 12px; font-weight: 700; }
 .hash-cell-collision { color: #fff; font-size: 12px; font-weight: 700; }

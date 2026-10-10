@@ -26,12 +26,12 @@ User: User
   - ❌ Live heatmap opacity persists — browser closed before test ran (bug: browser.close() on line 274 is before tests 14-16)
   - ❌ Customizer has separate map/live opacity sliders — same browser-closed bug
   - ❌ Map re-renders on resize — same browser-closed bug
-- BUG FOUND: test-e2e-playwright.js line 274 calls `await browser.close()` before tests 14, 15, 16 execute. Those 3 tests will always fail. The `browser.close()` must be moved after all tests.
+- BUG FOUND: tests/e2e/test-e2e-playwright.js line 274 calls `await browser.close()` before tests 14, 15, 16 execute. Those 3 tests will always fail. The `browser.close()` must be moved after all tests.
 - The "Map page loads with markers" failure is expected with an empty local DB — no nodes with coordinates exist to render markers.
 - FIX APPLIED 2026-03-26: Moved `browser.close()` from between test 13 and test 14 to after test 16 (just before the summary). Tests 14 ("Live heatmap opacity persists") and 15 ("Customizer has separate map/live opacity sliders") now pass. Test 16 ("Map re-renders on resize") now runs but fails due to empty DB (no markers to count) — same root cause as test 3. Result: 14/16 pass, 2 fail (both map-marker tests, expected with empty DB).
-- TESTS ADDED 2026-03-26: Issue #127 (copyToClipboard) — 8 unit tests in test-frontend-helpers.js using vm.createContext + DOM/clipboard mocks. Tests cover: fallback path (execCommand success/fail/throw), clipboard API path, null/undefined input, textarea lifecycle, no-callback usage. Pattern: `makeClipboardSandbox(opts)` helper builds sandbox with configurable navigator.clipboard and document.execCommand mocks. Total frontend helper tests: 47→55.
-- TESTS ADDED 2026-03-26: Issue #125 (packet detail dismiss) — 1 E2E test in test-e2e-playwright.js. Tests: click row → pane opens (empty class removed) → click ✕ → pane closes (empty class restored). Skips gracefully when DB has no packets. Inserted before analytics group, before browser.close().
-- E2E SPEED OPTIMIZATION 2026-03-26: Rewrote test-e2e-playwright.js for performance per Kobayashi's audit. Changes:
+- TESTS ADDED 2026-03-26: Issue #127 (copyToClipboard) — 8 unit tests in tests/unit/test-frontend-helpers.js using vm.createContext + DOM/clipboard mocks. Tests cover: fallback path (execCommand success/fail/throw), clipboard API path, null/undefined input, textarea lifecycle, no-callback usage. Pattern: `makeClipboardSandbox(opts)` helper builds sandbox with configurable navigator.clipboard and document.execCommand mocks. Total frontend helper tests: 47→55.
+- TESTS ADDED 2026-03-26: Issue #125 (packet detail dismiss) — 1 E2E test in tests/e2e/test-e2e-playwright.js. Tests: click row → pane opens (empty class removed) → click ✕ → pane closes (empty class restored). Skips gracefully when DB has no packets. Inserted before analytics group, before browser.close().
+- E2E SPEED OPTIMIZATION 2026-03-26: Rewrote tests/e2e/test-e2e-playwright.js for performance per Kobayashi's audit. Changes:
   - Replaced ALL 19 `waitUntil: 'networkidle'` → `'domcontentloaded'` + targeted `waitForSelector`/`waitForFunction`. networkidle stalls ~500ms+ per navigation due to persistent WebSocket + Leaflet tiles.
   - Eliminated 11 of 12 `waitForTimeout` sleeps → event-driven waits (waitForSelector, waitForFunction). Only 1 remains: 500ms for packet filter debounce (was 1500ms).
   - Reordered tests into page groups to eliminate 7 redundant navigations (page.goto 14→7): Home(1,6,7), Nodes(2,5), Map(3,9,10,13,16), Packets(4), Analytics(8), Live(11,12), NoNav(14,15).
@@ -41,7 +41,7 @@ User: User
 - COVERAGE PIPELINE TIMING (measured locally, Windows):
   - Phase 1: Istanbul instrumentation (22 JS files) — **3.7s**
   - Phase 2: Server startup (COVERAGE=1) — **~2s** (ready after pre-warm)
-  - Phase 3: Playwright E2E (test-e2e-playwright.js, 17 tests) — **3.7s**
+  - Phase 3: Playwright E2E (tests/e2e/test-e2e-playwright.js, 17 tests) — **3.7s**
   - Phase 4: Coverage collector (collect-frontend-coverage.js) — **746s (12.4 min)** ← THE BOTTLENECK
   - Phase 5: nyc report generation — **1.8s**
   - TOTAL: ~757s (~12.6 min locally). CI reports ~13 min (matches).

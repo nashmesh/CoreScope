@@ -30,16 +30,35 @@ const FROZEN_PROFILE_DIGESTS = new Map([
   ['local-package-and-test-all', '923b599550c2b7ce0fea68de475e981c1d6f38902e6c2d722407d672631584fe'],
 ]);
 
+const ROOT_TEST_PATH = /^test[^/\\]*\.(?:js|sh)$/;
+const SUITE_TEST_PATH = /^tests\/(unit|integration|e2e)\/test[^/\\]*\.(?:js|sh)$/;
+
+function suiteFromTestPath(testPath) {
+  const match = typeof testPath === 'string' && testPath.match(SUITE_TEST_PATH);
+  return match ? match[1] : null;
+}
+
+function isSupportedTestPath(testPath) {
+  return typeof testPath === 'string' &&
+    (ROOT_TEST_PATH.test(testPath) || SUITE_TEST_PATH.test(testPath));
+}
+
 function trackedRootTests(repoRoot) {
   const output = execFileSync(
     'git',
-    ['ls-files', '--', 'test*.js', 'test*.sh'],
+    [
+      'ls-files', '--',
+      'test*.js', 'test*.sh',
+      'tests/unit/test*.js', 'tests/unit/test*.sh',
+      'tests/integration/test*.js', 'tests/integration/test*.sh',
+      'tests/e2e/test*.js', 'tests/e2e/test*.sh',
+    ],
     { cwd: repoRoot, encoding: 'utf8' }
   );
   return output
     .split(/\r?\n/)
     .filter(Boolean)
-    .filter(file => !file.includes('/'))
+    .filter(isSupportedTestPath)
     .sort();
 }
 
@@ -208,6 +227,8 @@ function readFrozenInventory(repoRoot) {
     if (inventory.version !== 1 || !inventory.historicalStatusReferences ||
         !Array.isArray(inventory.orchestrationRootTests) ||
         !inventory.executedRootTests || typeof inventory.executedRootTests !== 'object' ||
+        !inventory.relocations || typeof inventory.relocations !== 'object' ||
+        Array.isArray(inventory.relocations) ||
         Array.isArray(inventory.executedRootTests)) {
       throw new Error('unsupported or incomplete inventory');
     }
@@ -247,6 +268,7 @@ function readFrozenInventory(repoRoot) {
     ).split(/\r?\n/).filter(testPath => /^test[^/\\]*\.(?:js|sh)$/.test(testPath)));
     return {
       profiles: inventory.executedRootTests,
+      relocations: inventory.relocations,
       references,
       orchestration: new Set(inventory.orchestrationRootTests),
       capturedPaths,
@@ -325,23 +347,27 @@ function validateManifest(manifest, options = {}) {
     }
 
     let source = null;
-    if (typeof item.path !== 'string' || !/^test[^/\\]*\.(?:js|sh)$/.test(item.path)) {
-      errors.push(`${prefix}.path must be a root-level test*.js or test*.sh path`);
+    if (!isSupportedTestPath(item.path)) {
+      errors.push(`${prefix}.path must be a root-level compatibility test or a direct test in a supported suite directory`);
     } else {
       counts.set(item.path, (counts.get(item.path) || 0) + 1);
       const resolvedPath = path.resolve(repoRoot, item.path);
-      let isRegularContainedFile = path.dirname(resolvedPath) === repoRoot;
+      const expectedParent = suiteFromTestPath(item.path)
+        ? path.join(repoRoot, 'tests', suiteFromTestPath(item.path))
+        : repoRoot;
+      let isRegularContainedFile = path.dirname(resolvedPath) === expectedParent;
       try {
         isRegularContainedFile = isRegularContainedFile &&
+          !fs.lstatSync(resolvedPath).isSymbolicLink() &&
           fs.lstatSync(resolvedPath).isFile() &&
-          path.dirname(fs.realpathSync(resolvedPath)) === fs.realpathSync(repoRoot);
+          path.dirname(fs.realpathSync(resolvedPath)) === fs.realpathSync(expectedParent);
       } catch (_) {
         isRegularContainedFile = false;
       }
       if (!fs.existsSync(resolvedPath)) {
         errors.push(`path does not exist: ${item.path}`);
       } else if (!isRegularContainedFile) {
-        errors.push(`${prefix}.path must resolve to a regular file directly under repoRoot`);
+        errors.push(`${prefix}.path must resolve to a regular file directly under its supported test directory`);
       } else {
         source = fs.readFileSync(resolvedPath, 'utf8');
       }
@@ -349,6 +375,10 @@ function validateManifest(manifest, options = {}) {
 
     if (!VALID_SUITES.has(item.suite)) {
       errors.push(`${prefix} has invalid suite: ${String(item.suite)}`);
+    }
+    const pathSuite = suiteFromTestPath(item.path);
+    if (pathSuite && VALID_SUITES.has(item.suite) && pathSuite !== item.suite) {
+      errors.push(`${prefix} relocation destination suite ${pathSuite} does not match manifest suite ${item.suite}`);
     }
     if (!VALID_STATUSES.has(item.status)) {
       errors.push(`${prefix} has invalid status: ${String(item.status)}`);
@@ -380,14 +410,18 @@ function validateManifest(manifest, options = {}) {
     }
 
     if (typeof item.path === 'string' && VALID_STATUSES.has(item.status)) {
-      const isCapturedPath = frozenInventory && frozenInventory.capturedPaths.has(item.path);
+      const relocationEntries = frozenInventory
+        ? Object.entries(frozenInventory.relocations || {})
+        : [];
+      const frozenIdentity = relocationEntries.find(([, destination]) => destination === item.path)?.[0] || item.path;
+      const isCapturedPath = frozenInventory && frozenInventory.capturedPaths.has(frozenIdentity);
       const referencingSurfaces = STATUS_SURFACES.filter(surface =>
         isCapturedPath
-          ? frozenInventory.references.get(surface).has(item.path)
+          ? frozenInventory.references.get(surface).has(frozenIdentity)
           : statusSurfaces.get(surface).includes(item.path)
       );
       if (isCapturedPath) {
-        const expectedOrchestration = frozenInventory.orchestration.has(item.path);
+        const expectedOrchestration = frozenInventory.orchestration.has(frozenIdentity);
         if ((item.orchestration === true) !== expectedOrchestration) {
           errors.push(`${prefix}.orchestration marker must match the frozen inventory`);
         }
@@ -469,11 +503,34 @@ function validateManifest(manifest, options = {}) {
     const manifestByPath = new Map(manifest.tests
       .filter(item => item && typeof item.path === 'string')
       .map(item => [item.path, item]));
+    const relocations = frozenInventory.relocations || {};
+    const relocationDestinations = new Set();
+    for (const [source, destination] of Object.entries(relocations)) {
+      if (!ROOT_TEST_PATH.test(source)) {
+        errors.push(`relocation source must be a frozen root test identity: ${source}`);
+      }
+      if (!isSupportedTestPath(destination)) {
+        errors.push(`relocation destination must be a supported test path: ${destination}`);
+      }
+      if (relocationDestinations.has(destination)) {
+        errors.push(`duplicate relocation destination: ${destination}`);
+      }
+      relocationDestinations.add(destination);
+      if (!manifestByPath.has(destination)) {
+        errors.push(`relocation destination is missing from manifest: ${destination}`);
+      }
+    }
     for (const [profileName, paths] of Object.entries(frozenInventory.profiles)) {
-      for (const testPath of paths) {
+      const resolvedPaths = paths.map(testPath => relocations[testPath] || testPath);
+      if (new Set(resolvedPaths).size !== resolvedPaths.length) {
+        errors.push(`execution profile ${profileName} resolves duplicate destinations`);
+      }
+      for (let index = 0; index < paths.length; index++) {
+        const frozenPath = paths[index];
+        const testPath = resolvedPaths[index];
         const item = manifestByPath.get(testPath);
         if (!item) {
-          errors.push(`execution profile ${profileName} references missing manifest path: ${testPath}`);
+          errors.push(`execution profile ${profileName} has unresolved frozen identity: ${frozenPath}`);
         } else if (item.status !== 'active') {
           errors.push(`execution profile ${profileName} references non-active test: ${testPath}`);
         } else if (item.orchestration) {
@@ -505,7 +562,7 @@ function main() {
     errors.forEach(error => console.error(`- ${error}`));
     process.exit(1);
   }
-  console.log(`Test manifest valid: ${manifest.tests.length} tracked root test runners.`);
+  console.log(`Test manifest valid: ${manifest.tests.length} tracked test runners.`);
 }
 
 if (require.main === module) main();

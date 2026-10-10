@@ -157,7 +157,7 @@ test('customizer navigation diagnostic dry-run preserves the canonical seeded fi
   assert.match(output, /copy.*test-fixtures\/e2e-fixture\.db/i);
   assert.match(output, /-static-trace-file <temporary>\/static-request-trace\.jsonl/);
   assert.match(output, /E2E_TEST_FILTER=\^Customizer v2:/);
-  assert.match(output, /node test-e2e-playwright\.js/);
+  assert.match(output, /node tests\/e2e\/test-e2e-playwright\.js/);
   assert.doesNotMatch(output, /go test -timeout 15m -coverprofile/);
   assert.doesNotMatch(output, /run-manifest\.js --profile ci-e2e-phase/);
   assert.strictEqual(sha256(fixture), before, 'diagnostic dry-run mutated the tracked fixture');
@@ -761,7 +761,7 @@ test('customizer diagnostic propagates the browser exit and captures failures on
         'prepare_frontend_paths() { RUN_INSTRUMENTED_DIR="$WORK_DIR/instrumented"; }',
         'assert_port_available() { return 0; }',
         'wait_for_server() { return 0; }',
-        'run_tracked_in_dir() { case "$*" in *E2E_TEST_FILTER=*) return "$DIAGNOSTIC_EXIT" ;; *) return 0 ;; esac; }',
+        'run_tracked_in_dir() { case "$*" in *E2E_TEST_FILTER=*) case "$*" in *"node tests/e2e/test-e2e-playwright.js"*) return "$DIAGNOSTIC_EXIT" ;; *) return 91 ;; esac ;; *) return 0 ;; esac; }',
         'capture_frontend_failure_evidence() { printf "evidence_status=%s stage=%s\\n" "$2" "$3"; }',
         'run_frontend_coverage 24680',
       ], { DIAGNOSTIC_EXIT: String(childStatus) });

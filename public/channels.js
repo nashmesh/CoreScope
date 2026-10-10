@@ -1121,7 +1121,7 @@
       // PSK-only entries) AFTER loadChannels() already rendered — so we
       // MUST re-render here, otherwise the My Channels section never
       // appears on first load when the route has no specific channel
-      // hash (regression caught by test-channel-issue-1111-e2e.js, case 2).
+      // hash (regression caught by tests/e2e/test-channel-issue-1111-e2e.js, case 2).
       mergeUserChannels();
       renderChannelList();
       if (routeParam) await selectChannel(routeParam);

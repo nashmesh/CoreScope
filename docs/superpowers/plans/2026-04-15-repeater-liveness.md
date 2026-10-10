@@ -1022,7 +1022,7 @@ There is a second node detail render path around line 1072. Apply the same relay
 - [ ] **Step 7: Run frontend tests**
 
 ```bash
-node test-repeater-liveness.js && node test-packet-filter.js && node test-frontend-helpers.js && node test-live.js && node test-packets.js 2>&1
+node test-repeater-liveness.js && node tests/unit/test-packet-filter.js && node tests/unit/test-frontend-helpers.js && node tests/unit/test-live.js && node tests/unit/test-packets.js 2>&1
 ```
 
 Expected: all pass.
@@ -1053,7 +1053,7 @@ All four tasks complete. Verify end-to-end:
 cd cmd/server && go test ./... -v 2>&1 | tail -20
 
 # Frontend
-node test-repeater-liveness.js && node test-packet-filter.js && node test-frontend-helpers.js && node test-live.js && node test-packets.js
+node test-repeater-liveness.js && node tests/unit/test-packet-filter.js && node tests/unit/test-frontend-helpers.js && node tests/unit/test-live.js && node tests/unit/test-packets.js
 ```
 
 Then start the server and open the Nodes page. A repeater with recent relay activity should show 🟢 Relaying; one that is alive but quiet should show 🟡 Idle.

@@ -169,7 +169,7 @@
 
   // #1804 r1 item 7 (adv3): legend builder extracted from the live-overlay
   // template IIFE so it is testable in isolation. See
-  // test-live-legend-helper.js. Emits one <li data-enum="<ENUM>">…</li>
+  // tests/unit/test-live-legend-helper.js. Emits one <li data-enum="<ENUM>">…</li>
   // per entry in ORDER, each row formatted as `SHORT — LONG`.
   //
   // #1804 r1 item 9 (adv6): inline fallback dropped. The top-of-file
@@ -4595,7 +4595,7 @@
   // this gate, every SPA re-mount of /live registers a new 'change' handler.
   // The handler reads from current DOM each time, so a one-shot bind is safe
   // across re-mounts. window.__liveMQLBindCount is a debug seam consumed by
-  // test-live-mql-leak-1180-e2e.js and otherwise unused.
+  // tests/e2e/test-live-mql-leak-1180-e2e.js and otherwise unused.
   var _liveNarrowMqlBound = false;
   // #1514 S4 — single source of truth for window._liveTestSeams is at the
   // earlier exposure block (search for `window._liveTestSeams = {`). The

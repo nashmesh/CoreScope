@@ -38,8 +38,30 @@ function entry(testPath, suite = 'unit', status = 'active', overrides = {}) {
   };
 }
 
+test('canonical browser runner loads its real startup dependencies from its declared path', () => {
+  const root = path.resolve(__dirname, '../..');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'tests/manifest.json'), 'utf8'));
+  const runners = manifest.tests.filter(entry => entry.path === 'test-e2e-playwright.js' ||
+    entry.path === 'tests/e2e/test-e2e-playwright.js');
+  assert.strictEqual(runners.length, 1);
+  const runnerPath = path.join(root, runners[0].path);
+  const source = fs.readFileSync(runnerPath, 'utf8');
+  const end = source.indexOf('\nconst BASE');
+  assert(end > 0, 'startup dependency boundary must exist');
+  // Execute actual imports with the runner's real CommonJS resolution base.
+  // No browser is launched and no import is replaced by a mock.
+  assert.doesNotThrow(() => require('vm').runInNewContext(source.slice(0, end), {
+    require: require('module').createRequire(runnerPath),
+  }));
+});
+
 test('E2E name selection rejects zero matches and runs matching callbacks', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../../test-e2e-playwright.js'), 'utf8');
+  const root = path.resolve(__dirname, '../..');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'tests/manifest.json'), 'utf8'));
+  const runners = manifest.tests.filter(entry =>
+    entry.path === 'test-e2e-playwright.js' || entry.path === 'tests/e2e/test-e2e-playwright.js');
+  assert.strictEqual(runners.length, 1, 'probe must select exactly one declared canonical runner');
+  const source = fs.readFileSync(path.join(root, runners[0].path), 'utf8');
   const registration = source.slice(source.indexOf('const results = []'), source.indexOf('\nfunction assert'));
   const closeMarker = '  await browser.close();';
   const summaryStart = source.lastIndexOf(closeMarker) + closeMarker.length;
@@ -68,7 +90,10 @@ test('E2E name selection rejects zero matches and runs matching callbacks', () =
 
 test('touch cancellation recovery follows moving rows through the actual E2E helpers and handlers', () => {
   const root = path.join(__dirname, '../..');
-  const source = fs.readFileSync(path.join(root, 'test-touch-gestures-coverage-e2e.js'), 'utf8');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'tests/manifest.json'), 'utf8'));
+  const entry = manifest.tests.find(test => test.path.endsWith('/test-touch-gestures-coverage-e2e.js'));
+  assert.ok(entry && entry.status === 'active' && entry.suite === 'e2e', 'moving-row probe follows the active canonical runner');
+  const source = fs.readFileSync(path.join(root, entry.path), 'utf8');
   const helpers = source.slice(source.indexOf('async function synthSwipe('), source.indexOf('async function main()'));
   const cases = source.slice(source.indexOf('    // ── (cov8)'), source.indexOf('    // ── (cov10)'));
   // Run the real helpers AND cov8/9 call sites, not a reimplementation of
@@ -298,7 +323,7 @@ for (const argv of [
     const manifest = JSON.parse(fs.readFileSync(path.join(root, 'tests/manifest.json'), 'utf8'));
     const profiles = JSON.parse(fs.readFileSync(path.join(root, 'tests/legacy-runner-inventory.json'), 'utf8')).executedRootTests;
     const options = parseArguments(argv, Object.keys(profiles));
-    const selected = selectTests(manifest, options, profiles);
+    const selected = selectTests(manifest, options, profiles, JSON.parse(fs.readFileSync(path.join(root, 'tests/legacy-runner-inventory.json'), 'utf8')).relocations);
     assert.strictEqual(selected.length, 0);
     assert.throws(() => dispatchTests(selected, options, {
       repoRoot: root,
@@ -328,7 +353,7 @@ test('canonical E2E profile clears ambient name narrowing but other execution pr
   const profiles = JSON.parse(fs.readFileSync(path.join(root, 'tests/legacy-runner-inventory.json'), 'utf8')).executedRootTests;
   for (const profile of ['ci-e2e-phase', null]) {
     const options = parseArguments(profile ? [`--profile=${profile}`] : ['--suite=e2e'], Object.keys(profiles));
-    const selected = selectTests(manifest, options, profiles);
+    const selected = selectTests(manifest, options, profiles, JSON.parse(fs.readFileSync(path.join(root, 'tests/legacy-runner-inventory.json'), 'utf8')).relocations);
     const environment = { E2E_TEST_FILTER: '^Customizer v2:', KEEP_ME: 'yes' };
     const calls = [];
     assert.strictEqual(dispatchTests(selected, options, {
@@ -342,7 +367,7 @@ test('canonical E2E profile clears ambient name narrowing but other execution pr
       },
     }), 0);
     assert.strictEqual(calls.length, selected.length);
-    assert.ok(calls.some(call => call.path === 'test-e2e-playwright.js'));
+    assert.ok(calls.some(call => call.path.endsWith('/test-e2e-playwright.js')));
     for (const call of calls) {
       assert.ok(profile ? !call.env.E2E_TEST_FILTER : call.env.E2E_TEST_FILTER === '^Customizer v2:', call.path);
       assert.strictEqual(call.env.KEEP_ME, 'yes');
@@ -351,7 +376,7 @@ test('canonical E2E profile clears ambient name narrowing but other execution pr
   }
 });
 
-test('combines a profile with suite and status filters in path order', () => {
+test('combines a profile with suite and status filters in frozen profile order', () => {
   const manifest = {
     tests: [
       entry('test-z.js', 'unit'),
@@ -371,7 +396,54 @@ test('combines a profile with suite and status filters in path order', () => {
       suites: ['unit', 'e2e'],
       statuses: ['active'],
     }, profiles).map(item => item.path),
-    ['test-a.js', 'test-z.js']
+    ['test-z.js', 'test-a.js']
+  );
+});
+
+test('resolves frozen profile identities through relocations without order drift', () => {
+  const manifest = {
+    tests: [
+      entry('tests/unit/test-z.js'),
+      entry('test-middle.js'),
+      entry('tests/unit/test-a.js'),
+    ],
+  };
+  const selected = selectTests(manifest, {
+    profile: 'selected',
+    suites: ['unit'],
+    statuses: ['active'],
+  }, {
+    selected: ['test-z.js', 'test-middle.js', 'test-a.js'],
+  }, {
+    'test-z.js': 'tests/unit/test-z.js',
+    'test-a.js': 'tests/unit/test-a.js',
+  });
+  assert.deepStrictEqual(selected.map(item => item.path), [
+    'tests/unit/test-z.js',
+    'test-middle.js',
+    'tests/unit/test-a.js',
+  ]);
+});
+
+test('rejects unresolved frozen identities and duplicate resolved destinations', () => {
+  const manifest = { tests: [entry('tests/unit/test-a.js')] };
+  const options = {
+    profile: 'broken',
+    suites: ['unit'],
+    statuses: ['active'],
+  };
+  assert.throws(
+    () => selectTests(manifest, options, { broken: ['test-a.js'] }, {}),
+    /references missing test: test-a\.js/
+  );
+  assert.throws(
+    () => selectTests(manifest, options, {
+      broken: ['test-a.js', 'test-alias.js'],
+    }, {
+      'test-a.js': 'tests/unit/test-a.js',
+      'test-alias.js': 'tests/unit/test-a.js',
+    }),
+    /resolves duplicate destination/
   );
 });
 
@@ -571,8 +643,12 @@ test('checked-in profiles exactly match each frozen legacy execution list', () =
       profile,
       suites: ['unit', 'integration', 'e2e'],
       statuses: ['active'],
-    }, inventory.executedRootTests).map(item => item.path);
-    assert.deepStrictEqual(selected, [...expected].sort(), profile);
+    }, inventory.executedRootTests, inventory.relocations).map(item => item.path);
+    assert.deepStrictEqual(
+      selected,
+      expected.map(testPath => inventory.relocations[testPath] || testPath),
+      profile
+    );
     assert(!selected.some(testPath =>
       manifest.tests.some(item => item.path === testPath && item.status === 'dormant')
     ));
@@ -592,7 +668,7 @@ test('frozen profile execution environments preserve legacy strict-flag behavior
     profile: 'ci-e2e-phase',
     suites: ['e2e'],
     statuses: ['active'],
-  }, inventory.executedRootTests);
+  }, inventory.executedRootTests, inventory.relocations);
   const frozenWorkflow = execFileSync(
     'git',
     ['show', `${inventory.capturedAtCommit}:.github/workflows/deploy.yml`],
@@ -608,11 +684,15 @@ test('frozen profile execution environments preserve legacy strict-flag behavior
       return { status: 0 };
     },
   }), 0);
+  const originalIdentityByPath = new Map(
+    Object.entries(inventory.relocations).map(([source, destination]) => [destination, source])
+  );
   for (const item of selected) {
+    const frozenIdentity = originalIdentityByPath.get(item.path) || item.path;
     const commandLine = frozenWorkflow.split(/\r?\n/).find(line =>
-      line.includes(`node ${item.path}`)
+      line.includes(`node ${frozenIdentity}`)
     );
-    assert(commandLine, `missing frozen command for ${item.path}`);
+    assert(commandLine, `missing frozen command for ${frozenIdentity}`);
     const expected = Object.fromEntries([...commandLine.matchAll(/\b([A-Z][A-Z0-9_]*)=([^\s\\]+)/g)]
       .filter(match => match[1].endsWith('_REQUIRE') || match[1].includes('_STRICT'))
       .map(match => [match[1], match[2]]));

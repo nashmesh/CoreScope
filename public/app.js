@@ -964,7 +964,7 @@ window.connectWS = connectWS;
    pubkey, body, …). Enforced at PR-creation time by:
      - scripts/check-xss-sinks.sh                            (local mirror)
      - ~/.openclaw/skills/pr-preflight/scripts/check-xss-sinks.sh  (canonical)
-     - test-preflight-xss-gate.js                            (CI gate)
+     - tests/integration/test-preflight-xss-gate.js                            (CI gate)
    See also: escapeAttr (public/home.js, public/path-inspector.js) for
    attribute-only contexts. */
 function escapeHtml(s) {

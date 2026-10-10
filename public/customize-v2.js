@@ -1389,7 +1389,7 @@
       { id: 'achromat', label: 'Achromatopsia', desc: 'Luminance-only (Rec.601).' }
     ];
     // Hardcoded literal lookup so the source contains `value="deut"` etc.
-    // (See test-issue-1380-cb-sim-overlay.js, asserts on source text.)
+    // (See tests/unit/test-issue-1380-cb-sim-overlay.js, asserts on source text.)
     var VALUE_ATTRS = {
       '':         'value=""',
       'deut':     'value="deut"',
@@ -2922,7 +2922,7 @@
     isOverridden: _isOverridden,
     // #1496 — full reset (not just STORAGE_KEY). See _resetAll() above.
     resetAll: _resetAll,
-    // Exposed for tests — see test-issue-1509-detect-preset.js.
+    // Exposed for tests — see tests/unit/test-issue-1509-detect-preset.js.
     detectActivePreset: _detectActivePreset,
     // #1380 — exposed for unit tests; see test-issue-1380-*.
     applyCbSim: _applyCbSim,

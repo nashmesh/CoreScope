@@ -125,7 +125,7 @@ window.ObserversSummary = (function () {
 // snapshot. O(n) over visible rows.
 //
 // Pure helper so it's testable in jsdom-less Node (see
-// test-issue-1644-redesign.js). DO NOT inline this in render() —
+// tests/unit/test-issue-1644-redesign.js). DO NOT inline this in render() —
 // the unit test introspects the global by name.
 window.preserveCompareSelection = function preserveCompareSelection(prevIds, tbody) {
   if (!tbody || !prevIds || typeof tbody.querySelectorAll !== 'function') return;

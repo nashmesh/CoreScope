@@ -10,7 +10,7 @@ package main
 // tools/freshen-fixture.sh shifts timestamps so id=1 (originally
 // loaded first) carries the most recent first_seen.
 //
-// The mobile e2e test test-observer-iata-1188-e2e.js fails as a
+// The mobile e2e test tests/e2e/test-observer-iata-1188-e2e.js fails as a
 // result: with the default 15-minute time window, /api/packets returns
 // 0 rows and the mobile DOM has no `tr[data-hash]` to tap.
 //
