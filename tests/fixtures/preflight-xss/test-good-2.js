@@ -1,4 +1,4 @@
-// test-good-2.js — DOM-grep coverage test for testdata/preflight-xss/good-2-tested.js
+// test-good-2.js — DOM-grep coverage test for good-2-tested.js
 // Demonstrates the (b) opt-out clause of check-xss-sinks: a same-PR test
 // asserting the audit payload renders inert satisfies the gate without
 // requiring escapeHtml() at the sink.
@@ -19,7 +19,7 @@ if (!JSDOM) {
   process.exit(0);
 }
 
-const { render } = require('./testdata/preflight-xss/good-2-tested.js');
+const { render } = require('./good-2-tested.js');
 const dom = new JSDOM('<!doctype html><div id="root"></div>');
 const el = dom.window.document.getElementById('root');
 // Payload taken from the post-#1537 XSS audit:

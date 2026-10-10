@@ -15,7 +15,7 @@ triggers:
 Reproduce reported bugs LOCALLY against fixture data, synthesized data, or live read-only staging before attempting any fix. Eliminates guess-and-check CI cycles.
 
 ## Scope
-- Local reproduction using project fixtures (`test-fixtures/` in repo)
+- Local reproduction using project fixtures (`tests/fixtures/` in repo)
 - SQLite queries against fixture/staging DBs
 - curl against locally-running server
 - Read-only SSH to staging (connection details in MEMORY.md)

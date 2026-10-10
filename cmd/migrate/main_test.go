@@ -20,7 +20,7 @@ import (
 // fixture DB relative to this test's package directory. We resolve
 // against runtime cwd which is cmd/migrate when `go test` runs.
 var fixtureCandidates = []string{
-	"../../test-fixtures/e2e-fixture.db",
+	"../../tests/fixtures/e2e/e2e-fixture.db",
 }
 
 func locateFixture(t *testing.T) string {

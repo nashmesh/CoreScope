@@ -496,7 +496,7 @@ print_dry_run() {
   if [ "$MODE" != go ]; then
     log "+ cmd/server go build -o <temporary>/corescope-server ."
     log "+ cmd/migrate go build -o <temporary>/corescope-migrate ."
-    log "+ copy test-fixtures/e2e-fixture.db to <temporary>/e2e-fixture.db"
+    log "+ copy tests/fixtures/e2e/e2e-fixture.db to <temporary>/e2e-fixture.db"
     log "+ freshen and seed the temporary E2E fixture"
     log "+ run corescope-migrate -db <temporary>/e2e-fixture.db"
     log "+ instrument frontend into <temporary>/public-instrumented"
@@ -729,13 +729,13 @@ run_frontend_coverage() {
   base_url="http://127.0.0.1:$port"
 
   command -v curl >/dev/null 2>&1 || { printf 'ERROR: curl is required\n' >&2; return 1; }
-  [ -f "$REPO_ROOT/test-fixtures/e2e-fixture.db" ] || { printf 'ERROR: test fixture is missing\n' >&2; return 1; }
+  [ -f "$REPO_ROOT/tests/fixtures/e2e/e2e-fixture.db" ] || { printf 'ERROR: test fixture is missing\n' >&2; return 1; }
   [ -x "$REPO_ROOT/node_modules/.bin/nyc" ] || { printf 'ERROR: npm dependencies are missing; run npm ci\n' >&2; return 1; }
   node -e "require('playwright')" >/dev/null 2>&1 || { printf 'ERROR: Playwright is not installed; run npm ci\n' >&2; return 1; }
 
   run_go cmd/server build -o "$server" .
   run_go cmd/migrate build -o "$migrator" .
-  cp "$REPO_ROOT/test-fixtures/e2e-fixture.db" "$fixture"
+  cp "$REPO_ROOT/tests/fixtures/e2e/e2e-fixture.db" "$fixture"
   freshen_fixture "$fixture"
   seed_e2e_fixture "$fixture"
   run_tracked "$migrator" -db "$fixture"

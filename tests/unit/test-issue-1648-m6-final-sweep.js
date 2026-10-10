@@ -3,7 +3,7 @@
  *
  * This is the headline M6 deliverable: a permanent regression-prevention
  * gate that fails CI if any new emoji codepoint lands in the source tree
- * outside an explicit allowlist (`tests/emoji-allowlist.txt`).
+ * outside an explicit allowlist (`tests/fixtures/policy/emoji-allowlist.txt`).
  *
  * Scans:
  *   public/**.{js,html,css}
@@ -17,7 +17,7 @@
  *   U+2B00–U+2BFF    (Misc-Symbols-Arrows — ⬆⬇⬢)
  *   U+2190–U+21FF    (Arrows — ←→↑↓↗↘ etc; many are text, see allowlist)
  *
- * Allowlist forms (see header of tests/emoji-allowlist.txt):
+ * Allowlist forms (see header of tests/fixtures/policy/emoji-allowlist.txt):
  *   path/glob (matches any line in file)
  *   path:line
  *   path:line:U+XXXX
@@ -160,7 +160,7 @@ function lintFiles(files, allow) {
 }
 
 function runLint() {
-  var allow = loadAllowlist(path.join(ROOT, 'tests', 'emoji-allowlist.txt'));
+  var allow = loadAllowlist(path.join(ROOT, 'tests', 'fixtures', 'policy', 'emoji-allowlist.txt'));
   var publicFiles = walkFiles(
     path.join(ROOT, 'public'),
     ['.js', '.html', '.css'],
@@ -195,10 +195,10 @@ if (require.main === module) {
     });
     if (violations.length > 50) console.error('  ... and ' + (violations.length - 50) + ' more');
     console.error('\nIf a hit is intentional text content (not iconography),');
-    console.error('add it to tests/emoji-allowlist.txt with a `# why` comment.');
+    console.error('add it to tests/fixtures/policy/emoji-allowlist.txt with a `# why` comment.');
     console.error('See the header of that file for entry formats.\n');
     assert.fail('emoji lint gate: ' + violations.length + ' violations');
   }
   console.log('✓ lint gate: 0 violations across public/** and cmd/**');
-  console.log('✓ allowlist: tests/emoji-allowlist.txt');
+  console.log('✓ allowlist: tests/fixtures/policy/emoji-allowlist.txt');
 }

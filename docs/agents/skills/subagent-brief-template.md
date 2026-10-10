@@ -63,7 +63,7 @@ Fix issue #999 — map markers disappear when observer goes inactive. Users see 
 - debug-repro: `~/.openclaw/skills/debug-repro/SKILL.md`
 
 ## Task
-1. Reproduce locally: `sqlite3 test-fixtures/e2e-fixture.db "SELECT COUNT(*) FROM observers WHERE inactive = 0"`
+1. Reproduce locally: `sqlite3 tests/fixtures/e2e/e2e-fixture.db "SELECT COUNT(*) FROM observers WHERE inactive = 0"`
 2. Identify why inactive observers are excluded from map query
 3. Fix the SQL query in cmd/server/handlers.go
 4. Test: start server with fixture DB, curl /api/nodes, verify markers present

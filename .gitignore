@@ -28,7 +28,7 @@ reps.txt
 cmd/server/server.exe
 cmd/ingestor/ingestor.exe
 # CI trigger
-!test-fixtures/e2e-fixture.db
+!tests/fixtures/e2e/e2e-fixture.db
 corescope-server
 cmd/server/server
 cmd/admin/admin

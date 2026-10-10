@@ -383,8 +383,8 @@ assert.throws(
 );
 
 // ---- repo allowlist file: shape sanity --------------------------------------
-const allowPath = path.join(repositoryRoot, 'tests', 'a11y-allowlist.yaml');
-assert.ok(fs.existsSync(allowPath), `tests/a11y-allowlist.yaml missing at ${allowPath}`);
+const allowPath = fromRepositoryRoot('tests', 'fixtures', 'policy', 'a11y-allowlist.yaml');
+assert.ok(fs.existsSync(allowPath), `tests/fixtures/policy/a11y-allowlist.yaml missing at ${allowPath}`);
 const entries = mod.loadAllowlist();
 for (const e of entries) {
   assert.ok(e.route && (e.selector || e.selector_pattern) && e.rule && e.issue && e.expires_at,

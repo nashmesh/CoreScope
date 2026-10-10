@@ -259,7 +259,7 @@ jobs:
         run: sh scripts/instrument-frontend.sh
 
       - name: Freshen fixture timestamps
-        run: bash tools/freshen-fixture.sh test-fixtures/e2e-fixture.db
+        run: bash tools/freshen-fixture.sh tests/fixtures/e2e/e2e-fixture.db
 
       - name: Seed grouped-packet row for #1486 collapse test
         # The committed fixture has 499 packets, each with exactly ONE
@@ -285,7 +285,7 @@ jobs:
         # unaffected) and reachable via the explicit ?timeWindow=0
         # deep-link the #1486 test uses.
         run: |
-          sqlite3 test-fixtures/e2e-fixture.db <<'SQL'
+          sqlite3 tests/fixtures/e2e/e2e-fixture.db <<'SQL'
           -- Sort the seeded row LAST in BOTH default packets views:
           --   • flat view sorts by transmissions.id DESC → id=0 puts it last
           --   • grouped view (#default for the packets page) sorts by
@@ -337,13 +337,13 @@ jobs:
         # server against the committed e2e fixture — so we run the
         # standalone migrate tool here to bring the fixture up to the
         # required shape before the server boots.
-        run: ./corescope-migrate -db test-fixtures/e2e-fixture.db
+        run: ./corescope-migrate -db tests/fixtures/e2e/e2e-fixture.db
 
       - name: Start Go server with fixture DB
         run: |
           fuser -k 13581/tcp 2>/dev/null || true
           sleep 1
-          ./corescope-server -port 13581 -db test-fixtures/e2e-fixture.db -public public-instrumented &
+          ./corescope-server -port 13581 -db tests/fixtures/e2e/e2e-fixture.db -public public-instrumented &
           echo $! > .server.pid
           for i in $(seq 1 30); do
             if curl -sf http://localhost:13581/api/healthz > /dev/null 2>&1; then

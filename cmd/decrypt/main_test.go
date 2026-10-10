@@ -115,7 +115,7 @@ func TestJSONOutputParseable(t *testing.T) {
 
 // Integration test against fixture DB (skipped if DB not found)
 func TestFixtureDecrypt(t *testing.T) {
-	dbPath := "../../test-fixtures/e2e-fixture.db"
+	dbPath := "../../tests/fixtures/e2e/e2e-fixture.db"
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Skip("fixture DB not found")
 	}

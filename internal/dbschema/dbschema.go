@@ -268,7 +268,7 @@ func ensureNeighborEdgesTable(rw *sql.DB) error {
 // The ingestor's applySchema also creates this table — duplicating it
 // here makes dbschema.Apply self-sufficient when called against a
 // fixture DB that pre-dates the soft-delete feature (e.g. CI's
-// test-fixtures/e2e-fixture.db, which never had any inactive rows).
+// tests/fixtures/e2e/e2e-fixture.db, which never had any inactive rows).
 // Schema kept in sync with cmd/ingestor/db.go:applySchema.
 func ensureInactiveNodesTable(rw *sql.DB) error {
 	_, err := rw.Exec(`CREATE TABLE IF NOT EXISTS inactive_nodes (

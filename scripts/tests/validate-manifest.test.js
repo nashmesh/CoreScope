@@ -675,12 +675,12 @@ test('requires repository integration runners to retain behavior-based classific
     },
     {
       path: 'tests/integration/test-e2e-badge-aggregate.sh',
-      source: '#!/bin/sh\naggregator="scripts/aggregate-e2e-pass.sh"\n"$aggregator" test-fixtures/e2e-output-sample.txt\n',
+      source: '#!/bin/sh\naggregator="scripts/aggregate-e2e-pass.sh"\n"$aggregator" tests/fixtures/e2e/e2e-output-sample.txt\n',
       command: ['sh', 'tests/integration/test-e2e-badge-aggregate.sh'],
     },
     {
       path: 'tests/integration/test-preflight-xss-gate.js',
-      source: "const { spawnSync } = require('child_process');\nspawnSync('bash', ['scripts/check-xss-sinks.sh', 'testdata/preflight-xss/bad.js']);\n",
+      source: "const { spawnSync } = require('child_process');\nspawnSync('bash', ['scripts/check-xss-sinks.sh', 'tests/fixtures/preflight-xss/bad.js']);\n",
       command: ['node', 'tests/integration/test-preflight-xss-gate.js'],
       activeSurface: 'test-all.sh',
       activeContent: 'node tests/integration/test-preflight-xss-gate.js\n',

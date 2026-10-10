@@ -3,7 +3,7 @@
  *
  * axe-core CI gate. Loads every major CoreScope route in dark + light theme,
  * injects axe-core, runs the configured ruleset, and asserts zero
- * violations (modulo `tests/a11y-allowlist.yaml`).
+ * violations (modulo `tests/fixtures/policy/a11y-allowlist.yaml`).
  *
  * Scope:
  *   - M5: color-contrast on desktop dark+light at 1200x900.
@@ -15,7 +15,7 @@
  *   Themes:    dark + light
  *   Viewports: desktop 1200x900, mobile 375x812 (M6 adds mobile)
  *
- * Allowlist (`tests/a11y-allowlist.yaml`):
+ * Allowlist (`tests/fixtures/policy/a11y-allowlist.yaml`):
  *   Operator-flagged false-positives. Each entry MUST cite an issue # AND
  *   an expires_at date. Expired entries are refused (warning logged, full
  *   failure). Missing fields => refused.
@@ -42,7 +42,7 @@ const path = require('path');
 const BASE = process.env.BASE_URL || 'http://localhost:13581';
 const ROUTES_FILTER = (process.env.AXE_ROUTES_ONLY || '').split(',').filter(Boolean);
 const SHOT_DIR = process.env.AXE_SCREENSHOT_DIR || '/tmp/axe-1668';
-const ALLOWLIST_PATH = path.join(repositoryRoot, 'tests', 'a11y-allowlist.yaml');
+const ALLOWLIST_PATH = path.join(repositoryRoot, 'tests', 'fixtures', 'policy', 'a11y-allowlist.yaml');
 
 // Routes: M1 audit baseline (already proven coverage).
 // Hash routes — CoreScope is a SPA, server returns the same shell for any path.

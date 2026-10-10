@@ -124,7 +124,7 @@ cd cmd/decrypt
 go test ./...
 
 # Manual test with the real fixture:
-go run . --channel "#wardriving" --db ../../test-fixtures/e2e-fixture.db --format irc
+go run . --channel "#wardriving" --db ../../tests/fixtures/e2e/e2e-fixture.db --format irc
 ```
 
 The shared crypto library also has independent tests:

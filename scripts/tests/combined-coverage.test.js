@@ -127,7 +127,7 @@ test('--help documents supported coverage modes', () => {
 });
 
 test('--dry-run describes the current Go and canonical frontend flow without mutation', () => {
-  const fixture = path.join(repoRoot, 'test-fixtures/e2e-fixture.db');
+  const fixture = path.join(repoRoot, 'tests/fixtures/e2e/e2e-fixture.db');
   const before = sha256(fixture);
   const result = run(['--dry-run'], { COVERAGE_PORT: '24680' });
   assert.strictEqual(result.status, 0, result.stderr);
@@ -136,7 +136,7 @@ test('--dry-run describes the current Go and canonical frontend flow without mut
   assert.match(output, /cmd\/ingestor.*go test.*-coverprofile/);
   assert.match(output, /cmd\/server.*go build/);
   assert.match(output, /cmd\/migrate.*go build/);
-  assert.match(output, /copy.*test-fixtures\/e2e-fixture\.db/i);
+  assert.match(output, /copy.*tests\/fixtures\/e2e\/e2e-fixture\.db/i);
   assert.match(output, /corescope-migrate.*-db/);
   assert.match(output, /-host 127\.0\.0\.1/);
   assert.match(output, /-port 24680/);
@@ -149,12 +149,12 @@ test('--dry-run describes the current Go and canonical frontend flow without mut
 });
 
 test('customizer navigation diagnostic dry-run preserves the canonical seeded fixture and narrows the browser target', () => {
-  const fixture = path.join(repoRoot, 'test-fixtures/e2e-fixture.db');
+  const fixture = path.join(repoRoot, 'tests/fixtures/e2e/e2e-fixture.db');
   const before = sha256(fixture);
   const result = run(['--customizer-navigation-diagnostic', '--dry-run'], { COVERAGE_PORT: '24681' });
   assert.strictEqual(result.status, 0, result.stderr);
   const output = `${result.stdout}\n${result.stderr}`;
-  assert.match(output, /copy.*test-fixtures\/e2e-fixture\.db/i);
+  assert.match(output, /copy.*tests\/fixtures\/e2e\/e2e-fixture\.db/i);
   assert.match(output, /-static-trace-file <temporary>\/static-request-trace\.jsonl/);
   assert.match(output, /E2E_TEST_FILTER=\^Customizer v2:/);
   assert.match(output, /node tests\/e2e\/test-e2e-playwright\.js/);
@@ -217,7 +217,7 @@ test('Playwright launchers allow bundled Chromium when CHROMIUM_PATH is unset', 
 test('temporary fixture seeding adds a current deterministic multi-hop packet', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'corescope-coverage-fixture-'));
   const fixture = path.join(temp, 'fixture.db');
-  fs.copyFileSync(path.join(repoRoot, 'test-fixtures/e2e-fixture.db'), fixture);
+  fs.copyFileSync(path.join(repoRoot, 'tests/fixtures/e2e/e2e-fixture.db'), fixture);
   try {
     const addMigratedColumns = spawnSync('python3', ['-c', [
       'import sqlite3, sys',
@@ -578,11 +578,11 @@ for (const trackedFunction of ['run_tracked', 'run_tracked_in_dir']) {
     fs.writeFileSync(worker, [
       '#!/bin/sh',
       `sh -c 'trap "exit 0" TERM; echo $$ > "$1"; while :; do sleep 1; done' sh "$1" </dev/null >/dev/null 2>&1 &`,
-      // Do not let the leader exit before the child has recorded readiness:
-      // correct process-group cleanup can otherwise kill it before child.pid.
+      // Prove the descendant actually started before the successful leader
+      // exits; otherwise correct group cleanup can win the scheduler race.
       'attempt=0',
-      'while [ ! -s "$1" ] && [ "$attempt" -lt 100 ]; do sleep 0.01; attempt=$((attempt + 1)); done',
-      '[ -s "$1" ] || exit 1',
+      'while [ ! -s "$1" ] && [ "$attempt" -lt 200 ]; do sleep 0.01; attempt=$((attempt + 1)); done',
+      '[ -s "$1" ] || exit 92',
       'exit 0',
     ].join('\n'), { mode: 0o755 });
     try {
@@ -739,10 +739,10 @@ test('customizer diagnostic propagates the browser exit and captures failures on
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'corescope-customizer-status-'));
     const fakeRepo = path.join(temp, 'repo');
     const work = path.join(temp, 'work');
-    fs.mkdirSync(path.join(fakeRepo, 'test-fixtures'), { recursive: true });
+    fs.mkdirSync(path.join(fakeRepo, 'tests', 'fixtures', 'e2e'), { recursive: true });
     fs.mkdirSync(path.join(fakeRepo, 'node_modules', '.bin'), { recursive: true });
     fs.mkdirSync(work);
-    fs.writeFileSync(path.join(fakeRepo, 'test-fixtures', 'e2e-fixture.db'), 'fixture');
+    fs.writeFileSync(path.join(fakeRepo, 'tests', 'fixtures', 'e2e', 'e2e-fixture.db'), 'fixture');
     fs.writeFileSync(path.join(fakeRepo, 'node_modules', '.bin', 'nyc'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(work, 'corescope-server'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     try {
@@ -780,11 +780,11 @@ for (const mode of ['full', 'frontend', 'customizer']) {
     const fakeRepo = path.join(temp, 'repo');
     const work = path.join(temp, 'work');
     const bin = path.join(temp, 'bin');
-    fs.mkdirSync(path.join(fakeRepo, 'test-fixtures'), { recursive: true });
+    fs.mkdirSync(path.join(fakeRepo, 'tests', 'fixtures', 'e2e'), { recursive: true });
     fs.mkdirSync(path.join(fakeRepo, 'node_modules', '.bin'), { recursive: true });
     fs.mkdirSync(work);
     fs.mkdirSync(bin);
-    fs.writeFileSync(path.join(fakeRepo, 'test-fixtures', 'e2e-fixture.db'), 'fixture');
+    fs.writeFileSync(path.join(fakeRepo, 'tests', 'fixtures', 'e2e', 'e2e-fixture.db'), 'fixture');
     fs.writeFileSync(path.join(fakeRepo, 'node_modules', '.bin', 'nyc'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(work, 'corescope-server'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nprintf "child=%s filter=%s keep=%s\\n" "$1" "${E2E_TEST_FILTER-}" "$KEEP_ME"\n', { mode: 0o755 });

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Test for scripts/aggregate-e2e-pass.sh — verifies aggregate across 45+
-# Playwright suites in test-fixtures/e2e-output-sample.txt is correct, not the
+# Playwright suites in tests/fixtures/e2e/e2e-output-sample.txt is correct, not the
 # broken old behavior of "grep digits-before-slash | tail -1" (which returned 2).
 #
 # Regression for #1296.
 set -u
-script_dir=$(cd "$(dirname "$0")" && pwd)
-aggregator="$script_dir/scripts/aggregate-e2e-pass.sh"
-fixture="$script_dir/test-fixtures/e2e-output-sample.txt"
+test_dir=$(cd "$(dirname "$0")" && pwd)
+repository_root=$(node -p "require(process.argv[1]).repositoryRoot" "$test_dir/../helpers/repository-root.js")
+aggregator="$repository_root/scripts/aggregate-e2e-pass.sh"
+fixture="$repository_root/tests/fixtures/e2e/e2e-output-sample.txt"
 
 if [ ! -x "$aggregator" ]; then
   chmod +x "$aggregator"

@@ -8,11 +8,11 @@
 set -e
 
 SOURCE_URL="${1:-https://analyzer.00id.net}"
-DB_PATH="test-fixtures/e2e-fixture.db"
+DB_PATH="tests/fixtures/e2e/e2e-fixture.db"
 
 echo "Capturing fixture from $SOURCE_URL..."
 
-mkdir -p test-fixtures
+mkdir -p "$(dirname "$DB_PATH")"
 rm -f "$DB_PATH"
 
 # Create schema
