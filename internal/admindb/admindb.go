@@ -58,6 +58,7 @@ type HashRegionDefinition struct {
 	Name         string
 	ParentName   string
 	Description  string
+	Color        string
 	GeometryJSON string
 }
 
@@ -128,6 +129,10 @@ func (s *Store) setPasswordComparer(compare func([]byte, []byte) error) {
 	s.passwordComparer = compare
 }
 
+// ErrHashRegionDefinitionsChanged indicates that a conditional replacement
+// lost an optimistic-concurrency race and must be retried from a fresh read.
+var ErrHashRegionDefinitionsChanged = errors.New("hash region definitions changed concurrently")
+
 // Open opens (creating if necessary) the admin database at path and
 // ensures its schema exists. Safe to call repeatedly / idempotent.
 func Open(path string) (*Store, error) {
@@ -181,6 +186,7 @@ func ensureSchema(db *sql.DB) error {
 			name          TEXT PRIMARY KEY,
 			parent_name   TEXT NOT NULL DEFAULT '',
 			description   TEXT NOT NULL DEFAULT '',
+			color         TEXT NOT NULL DEFAULT '',
 			geometry_json TEXT NOT NULL DEFAULT '',
 			created_at    TEXT NOT NULL
 		)`,
@@ -232,6 +238,7 @@ func ensureHashRegionDefinitionColumns(db *sql.DB) error {
 	for name, definition := range map[string]string{
 		"parent_name":   `TEXT NOT NULL DEFAULT ''`,
 		"description":   `TEXT NOT NULL DEFAULT ''`,
+		"color":         `TEXT NOT NULL DEFAULT ''`,
 		"geometry_json": `TEXT NOT NULL DEFAULT ''`,
 	} {
 		if columns[name] {
@@ -504,7 +511,7 @@ func (s *Store) ListHashRegions() ([]string, error) {
 // alphabetically by scope name.
 func (s *Store) ListHashRegionDefinitions() ([]HashRegionDefinition, error) {
 	rows, err := s.db.Query(`
-		SELECT name, parent_name, description, geometry_json
+		SELECT name, parent_name, description, color, geometry_json
 		FROM hash_regions
 		ORDER BY name ASC`)
 	if err != nil {
@@ -515,7 +522,7 @@ func (s *Store) ListHashRegionDefinitions() ([]HashRegionDefinition, error) {
 	var out []HashRegionDefinition
 	for rows.Next() {
 		var definition HashRegionDefinition
-		if err := rows.Scan(&definition.Name, &definition.ParentName, &definition.Description, &definition.GeometryJSON); err != nil {
+		if err := rows.Scan(&definition.Name, &definition.ParentName, &definition.Description, &definition.Color, &definition.GeometryJSON); err != nil {
 			return nil, fmt.Errorf("scan hash region definition: %w", err)
 		}
 		out = append(out, definition)
@@ -532,20 +539,84 @@ func (s *Store) ReplaceHashRegionDefinitions(definitions []HashRegionDefinition)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op if Commit succeeded
 
+	if err := replaceHashRegionDefinitionsTx(tx, definitions); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ReplaceHashRegionDefinitionsIfUnchanged performs an optimistic, atomic
+// replacement. It refuses to overwrite edits committed after the caller read
+// expected, preventing a merge import from silently dropping concurrent work.
+func (s *Store) ReplaceHashRegionDefinitionsIfUnchanged(definitions, expected []HashRegionDefinition) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op if Commit succeeded
+
+	rows, err := tx.Query(`
+		SELECT name, parent_name, description, color, geometry_json
+		FROM hash_regions
+		ORDER BY name ASC`)
+	if err != nil {
+		return fmt.Errorf("query hash region definitions: %w", err)
+	}
+	var current []HashRegionDefinition
+	for rows.Next() {
+		var definition HashRegionDefinition
+		if err := rows.Scan(&definition.Name, &definition.ParentName, &definition.Description, &definition.Color, &definition.GeometryJSON); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan hash region definition: %w", err)
+		}
+		current = append(current, definition)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !hashRegionDefinitionsEqual(current, expected) {
+		return ErrHashRegionDefinitionsChanged
+	}
+	if err := replaceHashRegionDefinitionsTx(tx, definitions); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit hash region definitions: %w", err)
+	}
+	return nil
+}
+
+func hashRegionDefinitionsEqual(left, right []HashRegionDefinition) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func replaceHashRegionDefinitionsTx(tx *sql.Tx, definitions []HashRegionDefinition) error {
 	if _, err := tx.Exec(`DELETE FROM hash_regions`); err != nil {
 		return fmt.Errorf("clear hash_regions: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, definition := range definitions {
 		if _, err := tx.Exec(`
-			INSERT INTO hash_regions (name, parent_name, description, geometry_json, created_at)
-			VALUES (?, ?, ?, ?, ?)`,
-			definition.Name, definition.ParentName, definition.Description, definition.GeometryJSON, now,
+			INSERT INTO hash_regions (name, parent_name, description, color, geometry_json, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			definition.Name, definition.ParentName, definition.Description, definition.Color, definition.GeometryJSON, now,
 		); err != nil {
 			return fmt.Errorf("insert hash region definition %q: %w", definition.Name, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // ReplaceHashRegions atomically replaces the full hash-region set with

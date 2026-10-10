@@ -15,7 +15,9 @@
     "test:ci:e2e": "node scripts/tests/run-manifest.js --profile ci-e2e-phase",
     "test:audit:all-active": "node scripts/tests/run-manifest.js --status active --list",
     "test:coverage": "sh scripts/combined-coverage.sh --go-only",
-    "test:full-coverage": "sh scripts/combined-coverage.sh"
+    "test:full-coverage": "sh scripts/combined-coverage.sh",
+    "test:region-scope": "node test-region-scope-helper.js && node test-region-scope-ui.js && node test-hash-region-admin.js",
+    "test:region-scope:e2e": "node test-region-scope-e2e.js"
   },
   "keywords": [],
   "author": "",

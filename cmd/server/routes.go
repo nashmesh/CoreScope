@@ -388,6 +388,8 @@ func (s *Server) RegisterRoutes(r *mux.Router) {
 	// (reloadRegionKeys), so edits apply without restarting it.
 	r.Handle("/api/admin/hash-regions", s.requireAdmin(http.HandlerFunc(s.handleAdminGetHashRegions))).Methods("GET")
 	r.Handle("/api/admin/hash-regions", s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.handleAdminPutHashRegions)))).Methods("PUT")
+	r.Handle("/api/admin/hash-regions/export", s.requireAdmin(http.HandlerFunc(s.handleAdminExportHashRegions))).Methods("GET")
+	r.Handle("/api/admin/hash-regions/import", s.requireAdmin(s.requireCSRF(http.HandlerFunc(s.handleAdminImportHashRegions)))).Methods("POST")
 
 	// Packet endpoints
 	r.HandleFunc("/api/packets/observations", s.handleBatchObservations).Methods("POST")
@@ -728,10 +730,16 @@ func (s *Server) handleConfigHashRegionDefinitions(w http.ResponseWriter, r *htt
 	definitions, err := s.admin.ListHashRegionDefinitions()
 	if err != nil {
 		log.Printf("[hash-regions] load definitions failed: %v", err)
-		writeJSON(w, []hashRegionDefinitionPayload{})
+		writeError(w, http.StatusInternalServerError, "failed to read hash region definitions")
 		return
 	}
-	writeJSON(w, hashRegionDefinitionPayloads(definitions))
+	payloads, err := hashRegionDefinitionPayloads(definitions)
+	if err != nil {
+		log.Printf("[hash-regions] invalid stored definitions: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to read hash region definitions")
+		return
+	}
+	writeJSON(w, payloads)
 }
 
 func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
@@ -4144,7 +4152,13 @@ func (s *Server) handleAdminGetHashRegions(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to read hash regions")
 		return
 	}
-	writeJSON(w, newHashRegionDefinitionsResponse(definitions))
+	response, err := newHashRegionDefinitionsResponse(definitions)
+	if err != nil {
+		log.Printf("[hash-regions] invalid stored definitions: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to read hash regions")
+		return
+	}
+	writeJSON(w, response)
 }
 
 // normalizeHashRegionName trims and adds a leading "#" if missing —
@@ -4172,13 +4186,32 @@ func (s *Server) handleAdminPutHashRegions(w http.ResponseWriter, r *http.Reques
 		HashRegions           []string                       `json:"hashRegions"`
 		HashRegionDefinitions *[]hashRegionDefinitionPayload `json:"hashRegionDefinitions"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&body); err != nil {
+		if _, overflow := err.(*http.MaxBytesError); overflow {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body exceeds 1 MiB limit")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if _, overflow := err.(*http.MaxBytesError); overflow {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body exceeds 1 MiB limit")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "request body must contain exactly one JSON value")
 		return
 	}
 
 	if body.HashRegionDefinitions != nil {
-		definitions, err := cleanHashRegionDefinitions(*body.HashRegionDefinitions)
+		storedDefinitions, err := s.admin.ListHashRegionDefinitions()
+		if err != nil {
+			log.Printf("[hash-regions] load definitions before save failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to read existing hash regions")
+			return
+		}
+		definitions, err := cleanHashRegionDefinitionsWithTrusted(*body.HashRegionDefinitions, storedDefinitions)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -4188,7 +4221,13 @@ func (s *Server) handleAdminPutHashRegions(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusInternalServerError, "failed to save hash regions")
 			return
 		}
-		writeJSON(w, newHashRegionDefinitionsResponse(definitions))
+		response, err := newHashRegionDefinitionsResponse(definitions)
+		if err != nil {
+			log.Printf("[hash-regions] encode saved definitions failed: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to save hash regions")
+			return
+		}
+		writeJSON(w, response)
 		return
 	}
 

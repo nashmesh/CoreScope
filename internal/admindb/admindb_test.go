@@ -484,6 +484,7 @@ func TestHashRegionDefinitionsReplaceAndList(t *testing.T) {
 	definitions := []HashRegionDefinition{
 		{
 			Name:         "#us-tn",
+			Color:        "#12abef",
 			Description:  "Tennessee regional scope",
 			GeometryJSON: `{"type":"Polygon","coordinates":[[[-90,35],[-81,35],[-81,37],[-90,35]]]}`,
 		},
@@ -518,6 +519,47 @@ func TestHashRegionDefinitionsReplaceAndList(t *testing.T) {
 	}
 	if want := []string{"#us-tn", "#us-tn-bna"}; !stringSlicesEqual(names, want) {
 		t.Fatalf("ListHashRegions = %v, want %v", names, want)
+	}
+}
+
+func TestReplaceHashRegionDefinitionsIfUnchangedRejectsStaleWrite(t *testing.T) {
+	s := openTestStore(t)
+	initial := []HashRegionDefinition{{Name: "#keep", Description: "original"}}
+	if err := s.ReplaceHashRegionDefinitions(initial); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := s.ListHashRegionDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	concurrent := []HashRegionDefinition{
+		{Name: "#added", Description: "concurrent add"},
+		{Name: "#keep", Description: "concurrent edit"},
+	}
+	if err := s.ReplaceHashRegionDefinitions(concurrent); err != nil {
+		t.Fatal(err)
+	}
+	proposed := []HashRegionDefinition{{Name: "#keep", Description: "stale import"}}
+	if err := s.ReplaceHashRegionDefinitionsIfUnchanged(proposed, expected); !errors.Is(err, ErrHashRegionDefinitionsChanged) {
+		t.Fatalf("stale replacement error = %v, want ErrHashRegionDefinitionsChanged", err)
+	}
+	got, err := s.ListHashRegionDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hashRegionDefinitionsEqual(got, concurrent) {
+		t.Fatalf("stale replacement overwrote concurrent definitions: got %#v want %#v", got, concurrent)
+	}
+	updated := []HashRegionDefinition{{Name: "#keep", Description: "fresh import"}}
+	if err := s.ReplaceHashRegionDefinitionsIfUnchanged(updated, got); err != nil {
+		t.Fatalf("fresh replacement failed: %v", err)
+	}
+	got, err = s.ListHashRegionDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hashRegionDefinitionsEqual(got, updated) {
+		t.Fatalf("fresh replacement = %#v, want %#v", got, updated)
 	}
 }
 

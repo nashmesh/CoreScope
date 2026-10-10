@@ -83,8 +83,16 @@ func routeDescriptions() map[string]routeMeta {
 		// Hash-region management: MeshCore transport-scope names (e.g.
 		// "#eu") the ingestor hashes to derive HMAC scope-matching keys.
 		// Distinct from /api/admin/regions above (IATA display names).
-		"GET /api/admin/hash-regions": {Summary: "Get hashRegions for editing", Description: "Returns the current hashRegions string list plus structured hashRegionDefinitions containing saved parent relationships, descriptions, and GeoJSON boundaries.", Tag: "admin", Auth: true},
-		"PUT /api/admin/hash-regions": {Summary: "Replace hashRegions or structured definitions", Description: "Full-replace: accepts the legacy hashRegions string list or hashRegionDefinitions with hierarchy, descriptions, and validated GeoJSON Polygon/MultiPolygon geometry. Legacy name-only updates preserve metadata for retained names. Changes to scope names take effect in the ingestor within ~15s.", Tag: "admin", Auth: true},
+		"GET /api/admin/hash-regions":        {Summary: "Get hashRegions for editing", Description: "Returns the current hashRegions string list plus structured hashRegionDefinitions containing saved parent relationships, descriptions, display colors, and GeoJSON boundaries.", Tag: "admin", Auth: true},
+		"PUT /api/admin/hash-regions":        {Summary: "Replace hashRegions or structured definitions", Description: "Full-replace: accepts the legacy hashRegions string list or hashRegionDefinitions with hierarchy, descriptions, optional #RRGGBB display colors, and validated GeoJSON Polygon/MultiPolygon geometry. Legacy name-only updates preserve metadata for retained names. Changes to scope names take effect in the ingestor within ~15s.", Tag: "admin", Auth: true},
+		"GET /api/admin/hash-regions/export": {Summary: "Export a hash-region backup", Description: "Downloads a deterministic versioned JSON backup containing all saved hash-region names, hierarchy, descriptions, colors, settings, and GeoJSON boundaries.", Tag: "admin", Auth: true},
+		"POST /api/admin/hash-regions/import": {Summary: "Validate or import a hash-region backup", Description: "Validates a versioned JSON backup and either previews or atomically imports it. Merge mode preserves regions absent from the backup and is the default; replace mode removes absent regions and requires explicit confirmation.", Tag: "admin", Auth: true,
+			QueryParams: []paramMeta{
+				{Name: "mode", Description: "Import mode: merge (default) or replace", Type: "string"},
+				{Name: "dryRun", Description: "Validate and report impact without saving", Type: "boolean"},
+				{Name: "expectedRevision", Description: "State revision returned by the matching dry run; required when applying an import", Type: "string"},
+				{Name: "confirm", Description: "Must be true for a non-dry-run replace import", Type: "boolean"},
+			}},
 
 		// Packets
 		"GET /api/packets": {Summary: "List packets", Description: "Returns decoded packets with filtering, sorting, and pagination.", Tag: "packets",

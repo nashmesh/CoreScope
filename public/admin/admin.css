@@ -174,3 +174,55 @@ body.auth-gated.authed { visibility: visible; }
   border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
   color: var(--success); padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px;
 }
+
+/* --- Structured hash-region editor --- */
+.hash-region-admin { max-width: 1200px; }
+.admin-note { color: var(--text-muted); font-size: 12px; }
+.region-editor-toolbar, .region-save-bar, .boundary-actions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.region-editor-toolbar { justify-content: space-between; margin-bottom: 12px; }
+.region-editor-toolbar h2 { margin: 0; }
+.region-backup-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.region-backup-controls select { min-width: min(100%, 340px); }
+.region-replace-confirm { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+#region-backup-status.is-destructive { color: var(--danger); font-weight: 600; }
+.region-editor-list { display: grid; gap: 12px; }
+.region-definition-card {
+  display: grid; grid-template-columns: minmax(150px, .8fr) minmax(150px, .8fr) minmax(220px, 1.5fr) minmax(120px, .5fr) auto;
+  gap: 12px; align-items: end; padding: 14px; background: var(--surface-1);
+  border: 1px solid var(--border); border-left: 5px solid var(--region-admin-color, var(--border)); border-radius: 8px;
+}
+.region-definition-card.is-active { border-color: var(--accent); border-left-color: var(--region-admin-color, var(--accent)); }
+.region-definition-card.is-child-region {
+  margin-inline-start: min(calc(var(--region-tree-depth, 0) * 1.25rem), 5rem);
+  border-inline-start-width: 5px;
+}
+.region-definition-field label, .boundary-tools label {
+  display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 12px; font-weight: 600;
+}
+.region-definition-field input, .region-definition-field select,
+.region-definition-field textarea, .boundary-tools select, .boundary-tools textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--input-bg); color: var(--text); font: inherit;
+}
+.region-definition-field textarea { min-height: 68px; resize: vertical; }
+.region-definition-field input[type="color"] { min-height: 42px; padding: 4px; cursor: pointer; }
+.region-definition-field input[type="color"]:disabled { cursor: not-allowed; opacity: .45; }
+.region-definition-field .region-color-auto { display: flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--text-muted); font-size: 12px; }
+.region-definition-field .region-color-auto input { width: auto; }
+.region-card-actions { display: flex; flex-direction: column; gap: 7px; }
+.boundary-layout { display: grid; grid-template-columns: minmax(360px, 1.2fr) minmax(280px, .8fr); gap: 18px; }
+#geometry-map { height: 430px; border: 1px solid var(--border); border-radius: 6px; }
+.boundary-actions { margin-top: 10px; }
+.freehand-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+.boundary-tools { display: flex; flex-direction: column; gap: 8px; }
+.boundary-tools .admin-note { margin: -3px 0 3px; }
+.region-save-bar { max-width: 1200px; margin: 0 auto 30px; }
+#save-status { color: var(--text-muted); font-size: 13px; }
+#payload-size-status.is-over-limit { color: var(--danger); font-weight: 600; }
+@media (max-width: 850px) {
+  .region-definition-card { grid-template-columns: 1fr; align-items: stretch; }
+  .region-card-actions { flex-direction: row; }
+  .boundary-layout { grid-template-columns: 1fr; }
+}

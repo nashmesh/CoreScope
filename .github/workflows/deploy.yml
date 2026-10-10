@@ -122,6 +122,13 @@ jobs:
       - name: Verify packet detail wire-path consistency
         run: node test-packet-wire-path.js
 
+      - name: Region Scope helper and administrator contracts
+        run: |
+          set -e
+          node test-region-scope-helper.js
+          node test-region-scope-ui.js
+          node test-hash-region-admin.js
+
       - name: 🛡️ Preflight XSS gate — actual --diff check (PR only)
         # The fixture self-test above (test-preflight-xss-gate.js) only
         # asserts the script's behavior against fixtures. It does NOT scan
@@ -357,6 +364,9 @@ jobs:
         run: |
           set -e -o pipefail
           npm run test:ci:e2e 2>&1 | tee e2e-output.txt
+
+      - name: Region Scope helper and administrator browser contracts
+        run: node test-region-scope-e2e.js
 
       # #1616: slide-over focus-restore flake-gate. Runs the slide-over
       # E2E 20 consecutive times against the SAME backend instance so

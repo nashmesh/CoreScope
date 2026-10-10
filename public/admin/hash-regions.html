@@ -11,15 +11,18 @@
     (function () {
       try {
         var saved = localStorage.getItem('meshcore-theme');
-        var t = saved === 'dark' || saved === 'light'
-          ? saved
-          : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        var t = saved === 'dark' || saved === 'light' ? saved :
+          (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         document.documentElement.setAttribute('data-theme', t);
       } catch (_) {}
     })();
   </script>
   <link rel="stylesheet" href="../style.css">
   <link rel="stylesheet" href="admin.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
 </head>
 <body class="auth-gated">
   <nav class="top-nav" role="navigation" aria-label="Admin navigation">
@@ -35,50 +38,99 @@
     <div class="nav-right">
       <label class="theme-toggle" title="Toggle dark mode">
         <input type="checkbox" id="darkModeCheckbox" role="switch" aria-label="Toggle dark mode">
-        <span class="theme-toggle-track" aria-hidden="true">
-          <span class="theme-toggle-thumb"></span>
+        <span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-thumb"></span>
           <span class="theme-toggle-icon theme-toggle-sun"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-sun"></use></svg></span>
           <span class="theme-toggle-icon theme-toggle-moon"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-moon"></use></svg></span>
         </span>
       </label>
       <div class="who" id="who"></div>
-      <button class="nav-btn hamburger" id="hamburger" title="Menu" aria-label="Toggle navigation menu"><svg class="ph-icon" aria-hidden="true" focusable="false"><use href="/icons/phosphor-sprite.svg#ph-list"></use></svg></button>
+      <button class="nav-btn hamburger" id="hamburger" title="Menu" aria-label="Toggle navigation menu"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-list"></use></svg></button>
     </div>
   </nav>
 
-  <main class="admin-page">
-    <div class="admin-header">
+  <main class="admin-page hash-region-admin">
+    <header class="admin-header">
       <h1>Regions</h1>
-      <p>MeshCore transport-scope names (e.g. <code>#eu</code>) the ingestor hashes with SHA-256 to derive HMAC keys for scope-matching on transport-route packets. Not related to the IATA display names on the <a href="/admin/regions">IATA Regions</a> page.</p>
-    </div>
+      <p>Define MeshCore transport-scope hierarchy, public descriptions, and authoritative Polygon or MultiPolygon boundaries. Region names begin with <code>#</code>.</p>
+    </header>
 
-    <div class="admin-section">
-      <div class="form-error" id="apply-notice" style="display:block; color:var(--text-muted); background:var(--surface-1); border-radius:6px; padding:10px 12px; margin-bottom:16px; font-size:13px;">
-        Changes apply automatically — the ingestor re-checks this list roughly every 15 seconds and does not need to be restarted.
+    <section class="admin-section" aria-labelledby="region-backup-heading">
+      <div class="region-editor-toolbar">
+        <div>
+          <h2 id="region-backup-heading">Region backups</h2>
+          <p class="admin-note">Export every definition, parent link, description, color, and boundary in one versioned JSON file. Imports are validated in full before anything is changed.</p>
+        </div>
+        <button class="btn-secondary" type="button" id="export-regions-btn">Export all regions</button>
       </div>
-
-      <h2>Configured Regions</h2>
-      <div class="form-error" id="regions-error"></div>
-      <table class="data-table">
-        <colgroup><col style="width:75%"><col style="width:25%"></colgroup>
-        <thead>
-          <tr><th>Region Name</th><th></th></tr>
-        </thead>
-        <tbody id="regions-list"></tbody>
-      </table>
-
-      <div class="search-row" id="add-region-row" style="margin-top:16px;">
-        <input type="text" id="new-region-name" placeholder="Region name (e.g. eu or #eu)" maxlength="64">
-        <button class="btn-secondary" id="add-region-btn">+ Add</button>
+      <div class="region-backup-controls">
+        <button class="btn-secondary" type="button" id="choose-region-backup-btn">Choose backup file</button>
+        <input type="file" id="region-backup-file" accept=".json,application/json" hidden aria-label="Choose region backup JSON">
+        <label for="region-backup-mode">Import behavior</label>
+        <select id="region-backup-mode">
+          <option value="merge">Merge — update matching regions and preserve all others</option>
+          <option value="replace">Replace — remove regions absent from this backup</option>
+        </select>
+        <label class="region-replace-confirm" for="region-replace-confirm">
+          <input type="checkbox" id="region-replace-confirm" disabled>
+          I understand Replace can remove existing regions.
+        </label>
+        <button class="btn-primary" type="button" id="import-regions-btn" disabled>Import validated backup</button>
       </div>
+      <p id="region-backup-status" class="admin-note" role="status" aria-live="polite">Choose a backup file to validate it before import.</p>
+    </section>
 
-      <div style="margin-top:16px; display:flex; align-items:center; gap:12px;">
-        <button class="btn-primary" id="save-regions-btn">Save changes</button>
-        <span id="save-status" class="row-error" style="color:var(--text-muted);"></span>
+    <section class="admin-section">
+      <p class="admin-note">Changes apply automatically after saving. Legacy name-only records load here without losing metadata already saved for retained names.</p>
+      <div class="form-error" id="regions-error" role="alert"></div>
+      <div class="region-editor-toolbar">
+        <h2>Structured definitions</h2>
+        <button class="btn-secondary" type="button" id="add-region-btn">+ Add region</button>
       </div>
+      <div id="region-editor-list" class="region-editor-list" aria-live="polite"></div>
+    </section>
+
+    <section class="admin-section boundary-editor" aria-labelledby="boundary-heading">
+      <h2 id="boundary-heading">Boundary editor</h2>
+      <p id="boundary-active-status" class="admin-note" role="status" aria-live="polite">Choose “Edit boundary” on a region.</p>
+      <div class="boundary-layout">
+        <div>
+          <div id="geometry-map" role="application" aria-label="Region boundary preview and drawing map"></div>
+          <div class="boundary-actions">
+            <button type="button" class="btn-secondary" id="draw-polygon-btn">Draw polygon</button>
+            <button type="button" class="btn-secondary" id="finish-polygon-btn" disabled>Finish polygon</button>
+            <button type="button" class="btn-secondary" id="clear-geometry-btn">Clear boundary</button>
+            <label class="freehand-toggle" for="freehand-mode"><input type="checkbox" id="freehand-mode"> Freehand pointer drawing</label>
+          </div>
+          <p class="admin-note">Drawing mode: click the map for vertices, or enable freehand and drag across the map. Drag vertex markers to adjust, then finish. At least three vertices are required.</p>
+        </div>
+        <div class="boundary-tools">
+          <label for="state-select">County states</label>
+          <select id="state-select" multiple size="5" aria-describedby="county-help"></select>
+          <label for="county-select">Counties in selected states</label>
+          <select id="county-select" multiple size="8" aria-describedby="county-help"></select>
+          <p id="county-help" class="admin-note">Select one or more states, then counties from any of them. County polygons are preserved as members of one MultiPolygon; no computational union is performed.</p>
+          <button type="button" class="btn-secondary" id="apply-counties-btn" disabled>Use selected counties</button>
+
+          <label for="geometry-coordinates">Polygon outer-ring coordinates</label>
+          <textarea id="geometry-coordinates" rows="7" placeholder="longitude, latitude — one vertex per line"></textarea>
+          <button type="button" class="btn-secondary" id="apply-coordinates-btn">Apply coordinates</button>
+
+          <label for="geojson-import">GeoJSON import</label>
+          <textarea id="geojson-import" rows="6" placeholder='Polygon, MultiPolygon, Feature, or FeatureCollection'></textarea>
+          <button type="button" class="btn-secondary" id="import-geojson-btn">Import GeoJSON</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="region-save-bar">
+      <button class="btn-primary" id="save-regions-btn" type="button" disabled>Save changes</button>
+      <span id="save-status" role="status" aria-live="polite"></span>
+      <span id="payload-size-status" class="admin-note" role="status" aria-live="polite"></span>
     </div>
   </main>
 
+  <script src="../region-scope-helpers.js"></script>
+  <script src="../map-tile-providers.js"></script>
   <script src="theme-toggle.js"></script>
   <script src="account-menu.js"></script>
   <script src="hash-regions.js"></script>

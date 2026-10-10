@@ -2485,6 +2485,35 @@
       ]
     },
     {
+      "path": "test-hash-region-admin.js",
+      "suite": "unit",
+      "command": [
+        "node",
+        "test-hash-region-admin.js"
+      ],
+      "requirements": {
+        "environment": [],
+        "flags": []
+      },
+      "status": "active",
+      "statusEvidence": [
+        {
+          "source": "package.json",
+          "detail": "explicitly listed in a Region Scope test command"
+        },
+        {
+          "source": ".github/workflows/deploy.yml",
+          "detail": "explicit focused Region Scope helper/admin/UI or self-contained browser step"
+        }
+      ],
+      "classificationEvidence": [
+        {
+          "source": "test-hash-region-admin.js",
+          "detail": "runs isolated Node assertions for structured region administration behavior"
+        }
+      ]
+    },
+    {
       "path": "test-home-coverage-e2e.js",
       "suite": "e2e",
       "command": [
@@ -6963,6 +6992,31 @@
       ]
     },
     {
+      "path": "test-mini-markdown-security.js",
+      "suite": "unit",
+      "command": [
+        "node",
+        "test-mini-markdown-security.js"
+      ],
+      "requirements": {
+        "environment": [],
+        "flags": []
+      },
+      "status": "active",
+      "statusEvidence": [
+        {
+          "source": "package.json",
+          "detail": "explicitly listed as a test command or documented runner"
+        }
+      ],
+      "classificationEvidence": [
+        {
+          "source": "test-mini-markdown-security.js",
+          "detail": "runs isolated Node/shell assertions without importing a browser runner or requiring a live server"
+        }
+      ]
+    },
+    {
       "path": "test-mqtt-status-panel.js",
       "suite": "unit",
       "command": [
@@ -8073,6 +8127,99 @@
       ]
     },
     {
+      "path": "test-region-scope-e2e.js",
+      "suite": "e2e",
+      "command": [
+        "node",
+        "test-region-scope-e2e.js"
+      ],
+      "requirements": {
+        "environment": [
+          {
+            "name": "CHROMIUM_PATH",
+            "required": false,
+            "description": "system Chromium executable override; bundled Playwright Chromium is used when unset"
+          }
+        ],
+        "flags": []
+      },
+      "status": "active",
+      "statusEvidence": [
+        {
+          "source": "package.json",
+          "detail": "explicitly listed as the Region Scope browser test command"
+        },
+        {
+          "source": ".github/workflows/deploy.yml",
+          "detail": "explicit focused Region Scope helper/admin/UI or self-contained browser step"
+        }
+      ],
+      "classificationEvidence": [
+        {
+          "source": "test-region-scope-e2e.js",
+          "detail": "imports Playwright browser automation and exercises Region Scope admin/helper behavior"
+        }
+      ]
+    },
+    {
+      "path": "test-region-scope-helper.js",
+      "suite": "unit",
+      "command": [
+        "node",
+        "test-region-scope-helper.js"
+      ],
+      "requirements": {
+        "environment": [],
+        "flags": []
+      },
+      "status": "active",
+      "statusEvidence": [
+        {
+          "source": "package.json",
+          "detail": "explicitly listed in a Region Scope test command"
+        },
+        {
+          "source": ".github/workflows/deploy.yml",
+          "detail": "explicit focused Region Scope helper/admin/UI or self-contained browser step"
+        }
+      ],
+      "classificationEvidence": [
+        {
+          "source": "test-region-scope-helper.js",
+          "detail": "runs isolated Node assertions for region recommendation and color helpers"
+        }
+      ]
+    },
+    {
+      "path": "test-region-scope-ui.js",
+      "suite": "unit",
+      "command": [
+        "node",
+        "test-region-scope-ui.js"
+      ],
+      "requirements": {
+        "environment": [],
+        "flags": []
+      },
+      "status": "active",
+      "statusEvidence": [
+        {
+          "source": "package.json",
+          "detail": "explicitly listed in a Region Scope test command"
+        },
+        {
+          "source": ".github/workflows/deploy.yml",
+          "detail": "explicit focused Region Scope helper/admin/UI or self-contained browser step"
+        }
+      ],
+      "classificationEvidence": [
+        {
+          "source": "test-region-scope-ui.js",
+          "detail": "runs isolated Node/source assertions for Region Scope UI wiring and lifecycle behavior"
+        }
+      ]
+    },
+    {
       "path": "test-rx-coverage-config-race.js",
       "suite": "unit",
       "command": [
@@ -8547,31 +8694,6 @@
       "classificationEvidence": [
         {
           "source": "test-xss-escape-sinks.js",
-          "detail": "runs isolated Node/shell assertions without importing a browser runner or requiring a live server"
-        }
-      ]
-    },
-    {
-      "path": "test-mini-markdown-security.js",
-      "suite": "unit",
-      "command": [
-        "node",
-        "test-mini-markdown-security.js"
-      ],
-      "requirements": {
-        "environment": [],
-        "flags": []
-      },
-      "status": "active",
-      "statusEvidence": [
-        {
-          "source": "package.json",
-          "detail": "explicitly listed as a test command or documented runner"
-        }
-      ],
-      "classificationEvidence": [
-        {
-          "source": "test-mini-markdown-security.js",
           "detail": "runs isolated Node/shell assertions without importing a browser runner or requiring a live server"
         }
       ]
