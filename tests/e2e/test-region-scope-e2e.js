@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 'use strict';
-
 const { repositoryRoot } = require('../helpers/repository-root');
 
 const assert = require('assert');
@@ -49,6 +48,33 @@ const server = http.createServer((request, response) => {
           providers: { carto: { enabled: false }, osm: { enabled: true } },
         },
       },
+    }));
+  }
+  if (url.pathname === '/api/scope-coverage') {
+    return send(response, 200, 'application/json', JSON.stringify({
+      regions: [
+        { name: '#tn', nodeCount: 2, hull: [[35, -88], [40, -70], [36, -87]] },
+        { name: '#a320', nodeCount: 1, hull: [] },
+      ],
+    }));
+  }
+  if (url.pathname === '/api/scope-coverage/nodes') {
+    return send(response, 200, 'application/json', JSON.stringify({
+      nodes: [
+        { pubkey: 'outside-node', regions: ['#tn'] },
+        { pubkey: 'kentucky-node', regions: ['#us-ky'] },
+        { pubkey: 'stale-node', regions: ['#tn'] },
+      ],
+    }));
+  }
+  if (url.pathname === '/api/nodes') {
+    return send(response, 200, 'application/json', JSON.stringify({
+      nodes: [
+        { public_key: 'outside-node', name: 'Outside relay', role: 'repeater', lat: 40, lon: -70, last_seen: new Date().toISOString() },
+        { public_key: 'kentucky-node', name: 'Kentucky relay', role: 'repeater', lat: 37, lon: -86, last_seen: new Date().toISOString() },
+        { public_key: 'stale-node', name: 'Stale relay', role: 'repeater', lat: 36, lon: -87, last_seen: '2000-01-01T00:00:00Z' },
+      ],
+      total: 3, limit: 1000, offset: 0,
     }));
   }
   if (url.pathname === '/geo/us-counties.geojson' && failCounties) {
@@ -114,15 +140,42 @@ async function clipboardText(page) {
     const regionColors = await page.locator('#region-scope-list .region-scope-item').evaluateAll(nodes => nodes.map(node => node.style.getPropertyValue('--region-scope-color')));
     assert.strictEqual(new Set(regionColors).size, regionColors.length, 'visible regions receive distinct colors');
     assert.strictEqual(regionColors.every(Boolean), true, 'every region card exposes its color');
-    assert.strictEqual(await page.getByLabel('Select #tn').evaluate(node => node.closest('.region-scope-item').style.getPropertyValue('--region-scope-color')), '#12abef', 'saved admin color overrides the automatic palette');
+    const tnHelperColor = await page.getByLabel('Select #tn').evaluate(node => node.closest('.region-scope-item').style.getPropertyValue('--region-scope-color'));
+    assert.strictEqual(tnHelperColor, '#12abef', 'saved admin color overrides the automatic palette');
+    const middleHelperColor = await page.getByLabel('Select #middle').evaluate(node => node.closest('.region-scope-item').style.getPropertyValue('--region-scope-color'));
+    const middleCoverageColor = await page.evaluate(() => scopeCoverageRegionColor('#middle'));
+    assert.strictEqual(middleHelperColor, middleCoverageColor, 'automatic region color is canonical across helper and coverage surfaces');
+    const collidingSurfaceColors = await page.evaluate(() => {
+      const configured = [{ name: '#middle' }];
+      const helperColor = RegionScopeHelpers.buildRegionColorTable(configured)['#middle'];
+      scopeCoverageSetRegionColors(configured, [
+        { name: '#middle' },
+        { name: '#a320' },
+      ]);
+      return {
+        helper: helperColor,
+        coverage: scopeCoverageRegionColor('#middle'),
+        observed: scopeCoverageRegionColor('#a320'),
+        configuredInitial: RegionScopeHelpers.regionColorToken('#middle'),
+        observedInitial: RegionScopeHelpers.regionColorToken('#a320'),
+      };
+    });
+    assert.strictEqual(collidingSurfaceColors.configuredInitial, collidingSurfaceColors.observedInitial,
+      'browser fixture uses an actual earlier-sorting automatic hue collision');
+    assert.strictEqual(collidingSurfaceColors.coverage, collidingSurfaceColors.helper,
+      'an earlier-sorting observed-only collision cannot change a configured region across Helper, Live, and Regions');
+    assert.notStrictEqual(collidingSurfaceColors.observed, collidingSurfaceColors.coverage,
+      'the colliding observed-only region receives a distinct coverage color');
     const collapsedThemeColorCount = await page.evaluate(() => {
       const root = document.documentElement;
       const anchors = ['--accent', '--warning', '--success', '--status-purple', '--danger', '--status-info', '--status-orange', '--link-color'];
       const previous = anchors.map(name => root.style.getPropertyValue(name));
       anchors.forEach(name => root.style.setProperty(name, '#123456'));
-      const colors = Array.from({ length: 100 }, (_, index) => {
+      const definitions = Array.from({ length: 100 }, (_, index) => ({ name: '#region-' + index }));
+      const table = RegionScopeHelpers.buildRegionColorTable(definitions);
+      const colors = definitions.map(definition => {
         const probe = document.createElement('span');
-        probe.style.color = RegionScopeHelpers.regionColorToken(index, 100);
+        probe.style.color = table[definition.name];
         document.body.appendChild(probe);
         const value = getComputedStyle(probe).color;
         probe.remove();
@@ -135,6 +188,33 @@ async function clipboardText(page) {
     const boundaryColors = JSON.parse(await page.locator('#region-scope-map').getAttribute('data-boundary-colors'));
     assert.strictEqual(boundaryColors.length, 3, 'map records one rendered color per saved boundary');
     assert.strictEqual(boundaryColors.some(color => /var\(|color-mix/.test(color)), false, 'Canvas boundaries receive concrete computed colors');
+    const middleRow = page.getByLabel('Select #middle').locator('xpath=ancestor::*[contains(@class,"region-scope-item")]');
+    const helperRenderedBefore = await middleRow.evaluate(node => getComputedStyle(node).borderLeftColor);
+    const helperBoundaryIndex = boundaryColors.indexOf(helperRenderedBefore);
+    assert.notStrictEqual(helperBoundaryIndex, -1, 'Helper map records the configured automatic row color on its boundary');
+    const helperBoundaryBefore = boundaryColors[helperBoundaryIndex];
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--region-scope-auto-lightness', '0.82');
+      document.documentElement.style.setProperty('--region-scope-auto-chroma', '0.08');
+      window.dispatchEvent(new CustomEvent('theme-changed'));
+    });
+    await page.waitForFunction(({ previous, index }) => {
+      const colors = JSON.parse(document.querySelector('#region-scope-map').getAttribute('data-boundary-colors'));
+      return colors[index] !== previous;
+    }, { previous: helperBoundaryBefore, index: helperBoundaryIndex });
+    const helperRenderedAfter = await middleRow.evaluate(node => getComputedStyle(node).borderLeftColor);
+    const helperBoundaryAfter = JSON.parse(await page.locator('#region-scope-map').getAttribute('data-boundary-colors'))[helperBoundaryIndex];
+    assert.notStrictEqual(helperRenderedAfter, helperRenderedBefore, 'existing Helper rows update their rendered automatic color after a theme change');
+    assert.notStrictEqual(helperBoundaryAfter, helperBoundaryBefore, 'existing Helper map boundaries redraw with the changed concrete automatic color');
+    await page.evaluate(() => {
+      document.documentElement.style.removeProperty('--region-scope-auto-lightness');
+      document.documentElement.style.removeProperty('--region-scope-auto-chroma');
+      window.dispatchEvent(new CustomEvent('theme-changed'));
+    });
+    await page.waitForFunction(({ previous, index }) => {
+      const colors = JSON.parse(document.querySelector('#region-scope-map').getAttribute('data-boundary-colors'));
+      return colors[index] !== previous;
+    }, { previous: helperBoundaryAfter, index: helperBoundaryIndex });
 
     await page.locator('#region-scope-list').evaluate(node => { node.style.maxHeight = '90px'; });
     await page.evaluate(() => window.dispatchEvent(new Event('resize')));
@@ -272,6 +352,163 @@ async function clipboardText(page) {
     await page.goto(base + '/#/tools');
     assert.deepStrictEqual(await page.evaluate(() => window.__tileListenerCounts), { added: 1, removed: 1 }, 'tile provider listener is removed on route teardown');
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('mc-tile-provider-changed')));
+    await page.evaluate(() => {
+      window.__scopePolygonStyles = [];
+      if (!L.__scopeOriginalPolygon) {
+        L.__scopeOriginalPolygon = L.polygon;
+        L.polygon = function (latlngs, style) {
+          window.__scopePolygonStyles.push({
+            latlngs: JSON.parse(JSON.stringify(latlngs)),
+            style: Object.assign({}, style),
+          });
+          return L.__scopeOriginalPolygon.apply(this, arguments);
+        };
+      }
+    });
+
+    await page.goto(base + '/#/regions', { waitUntil: 'domcontentloaded' });
+    await page.locator('#regionsLegendList .regions-legend-row').first().waitFor();
+    assert.match(await page.locator('#regionsLegendList').textContent(), /#tn\s*2/, 'Regions tab keeps the full observed relay count');
+    await page.waitForFunction(() => document.querySelectorAll('.leaflet-pane path[fill="#12abef"]').length >= 2);
+    const regionsMiddleBefore = await page.evaluate(() => {
+      const matches = window.__scopePolygonStyles.filter(entry => JSON.stringify(entry.latlngs).includes('[35,-88]'));
+      return matches.at(-1).style.fillColor;
+    });
+    assert.strictEqual(regionsMiddleBefore, helperRenderedBefore,
+      'Regions renders the configured automatic color used by Helper despite the earlier-sorting observed-only collision');
+    const regionsStyleCount = await page.evaluate(() => window.__scopePolygonStyles.length);
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--region-scope-auto-lightness', '0.82');
+      document.documentElement.style.setProperty('--region-scope-auto-chroma', '0.08');
+      window.dispatchEvent(new CustomEvent('theme-changed'));
+    });
+    await page.waitForFunction(previous => window.__scopePolygonStyles.length > previous, regionsStyleCount);
+    const regionsMiddleAfter = await page.evaluate(() => {
+      const matches = window.__scopePolygonStyles.filter(entry => JSON.stringify(entry.latlngs).includes('[35,-88]'));
+      return matches.at(-1).style.fillColor;
+    });
+    assert.notStrictEqual(regionsMiddleAfter, regionsMiddleBefore, 'Regions redraws existing automatic boundaries after a theme change');
+    await page.evaluate(() => {
+      document.documentElement.style.removeProperty('--region-scope-auto-lightness');
+      document.documentElement.style.removeProperty('--region-scope-auto-chroma');
+      window.dispatchEvent(new CustomEvent('theme-changed'));
+    });
+    await page.waitForTimeout(350);
+    assert.strictEqual(await page.locator('.leaflet-pane path[fill="#12abef"]').count() >= 2, true,
+      'Regions tab uses the assigned color for both the saved polygon and an out-of-bound relay marker');
+    assert.strictEqual(await page.locator('[class*="regionsNodes"] path[fill="#12abef"]').count(), 1,
+      'relay outside the saved boundary remains visible without expanding the polygon');
+    assert.strictEqual(await page.locator('[class*="regionsNodes"] path').count(), 2,
+      'Regions tab renders active scoped nodes and excludes stale scoped nodes');
+    await page.getByLabel('Show #middle').uncheck();
+    await page.getByLabel('Show #manual').uncheck();
+    await page.getByLabel('Show #us-ky').uncheck();
+    await page.getByLabel('Show #a320').uncheck();
+    await page.waitForFunction(() => document.querySelectorAll('[class*="regionsNodes"] path').length === 1);
+    assert.match(page.url(), /#\/regions\?regions=%23tn/, 'Regions selection is bookmarkable in the hash URL');
+    assert.strictEqual(await page.getByLabel('Show #tn').isChecked(), true, 'selected region remains visible');
+
+    await page.evaluate(() => localStorage.setItem('meshcore-live-scope-coverage', 'false'));
+    await page.goto(base + '/#/live?lat=35.5&lon=-86&zoom=6', { waitUntil: 'domcontentloaded' });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const liveCoverageToggle = page.locator('#liveScopeCoverageToggle');
+    const liveRegionNames = page.locator('#liveScopeRegionVisibility');
+    await liveCoverageToggle.waitFor({ state: 'attached' });
+    await page.waitForFunction(() => {
+      const label = document.querySelector('#liveScopeCoverageLabel');
+      return label && label.style.display !== 'none';
+    });
+    await liveRegionNames.locator('label').first().waitFor({ state: 'attached' });
+    await page.evaluate(() => {
+      window.__scopePolygonStyles = [];
+      if (!L.__scopeOriginalPolygon) {
+        L.__scopeOriginalPolygon = L.polygon;
+        L.polygon = function (latlngs, style) {
+          window.__scopePolygonStyles.push({
+            latlngs: JSON.parse(JSON.stringify(latlngs)),
+            style: Object.assign({}, style),
+          });
+          return L.__scopeOriginalPolygon.apply(this, arguments);
+        };
+      }
+    });
+    assert.strictEqual(await liveRegionNames.evaluate(node => node.style.display), 'none',
+      'Live map hides region scope names while Region coverage is off');
+    await liveCoverageToggle.evaluate(toggle => {
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.querySelector('#liveScopeRegionVisibility').style.display !== 'none');
+    assert.notStrictEqual(await liveRegionNames.evaluate(node => node.style.display), 'none',
+      'Live map reveals region scope names when Region coverage is on');
+    await page.waitForFunction(() => window.__scopePolygonStyles.some(entry => JSON.stringify(entry.latlngs).includes('[35,-88]')));
+    const liveMiddleBefore = await page.evaluate(() => {
+      const matches = window.__scopePolygonStyles.filter(entry => JSON.stringify(entry.latlngs).includes('[35,-88]'));
+      return matches.at(-1).style.fillColor;
+    });
+    const liveTnCustomColor = await page.evaluate(() => {
+      const matches = window.__scopePolygonStyles.filter(entry => JSON.stringify(entry.latlngs).includes('[34,-90]'));
+      return matches.at(-1).style.fillColor;
+    });
+    assert.strictEqual(liveTnCustomColor, tnHelperColor,
+      'Live renders the same administrator override already rendered by Helper and Regions');
+    assert.strictEqual(liveMiddleBefore, helperRenderedBefore,
+      'Live renders the configured automatic color used by Helper and Regions despite the observed-only collision');
+    const liveStyleCount = await page.evaluate(() => window.__scopePolygonStyles.length);
+    await page.evaluate(() => {
+      document.documentElement.style.setProperty('--region-scope-auto-lightness', '0.82');
+      document.documentElement.style.setProperty('--region-scope-auto-chroma', '0.08');
+      window.dispatchEvent(new CustomEvent('theme-changed'));
+    });
+    await page.waitForFunction(previous => window.__scopePolygonStyles.length > previous, liveStyleCount);
+    const liveMiddleAfter = await page.evaluate(() => {
+      const matches = window.__scopePolygonStyles.filter(entry => JSON.stringify(entry.latlngs).includes('[35,-88]'));
+      return matches.at(-1).style.fillColor;
+    });
+    assert.notStrictEqual(liveMiddleAfter, liveMiddleBefore, 'Live redraws existing Canvas boundaries after a theme change');
+    await page.evaluate(() => {
+      document.documentElement.style.removeProperty('--region-scope-auto-lightness');
+      document.documentElement.style.removeProperty('--region-scope-auto-chroma');
+      window.dispatchEvent(new CustomEvent('theme-changed'));
+    });
+    await page.waitForTimeout(350);
+    const liveCanvasColor = await page.evaluate(() => {
+      const token = scopeCoverageRegionColor('#middle');
+      const resolved = scopeCoverageResolveColor(token);
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#010203';
+      context.fillStyle = resolved;
+      return { token, resolved, canvas: context.fillStyle };
+    });
+    assert.match(liveCanvasColor.token, /var\(/, 'automatic coverage color remains a theme-derived DOM token');
+    assert.doesNotMatch(liveCanvasColor.resolved, /var\(|color-mix/, 'Live Canvas receives a concrete computed color');
+    assert.notStrictEqual(liveCanvasColor.canvas, '#010203', 'the resolved automatic color is accepted by Canvas');
+    await liveCoverageToggle.evaluate(toggle => {
+      toggle.checked = false;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.querySelector('#liveScopeRegionVisibility').style.display === 'none');
+    assert.strictEqual(await liveRegionNames.evaluate(node => node.style.display), 'none',
+      'Live map hides region scope names again when Region coverage is switched off');
+    await liveCoverageToggle.evaluate(toggle => {
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.querySelector('#liveScopeRegionVisibility').style.display !== 'none');
+    await page.locator('.leaflet-overlay-pane canvas').first().waitFor({ state: 'attached' });
+    assert.strictEqual(await liveCoverageToggle.isChecked(), true,
+      'Live map activates the shared saved-region coverage renderer');
+    const liveNodeCountBefore = await page.evaluate(() => window._liveNodeMarkers().size);
+    await page.getByLabel('Show #tn boundary').evaluate(input => {
+      input.checked = false;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    assert.match(page.url(), /regions=/, 'Live per-region polygon visibility is bookmarkable in the hash URL');
+    assert.strictEqual(await page.getByLabel('Show #tn boundary').isChecked(), false,
+      'Live region controls hide an individual saved boundary');
+    assert.strictEqual(await page.evaluate(() => window._liveNodeMarkers().size), liveNodeCountBefore,
+      'Live region visibility changes polygons only and leave node markers unchanged');
 
     await page.goto(base + '/admin/hash-regions', { waitUntil: 'domcontentloaded' });
     await page.locator('.region-definition-card').first().waitFor();
@@ -386,6 +623,37 @@ async function clipboardText(page) {
     assert.deepStrictEqual(relevantErrors, [], 'no unexpected browser errors: ' + relevantErrors.join('; '));
     await context.close();
 
+    const lifecycleContext = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+    const lifecyclePage = await lifecycleContext.newPage();
+    const lifecycleErrors = [];
+    lifecyclePage.on('pageerror', error => lifecycleErrors.push(error.message));
+    await lifecyclePage.goto(base + '/#/tools', { waitUntil: 'domcontentloaded' });
+    await lifecyclePage.evaluate(() => {
+      window.__regionsToggleChangeBindings = 0;
+      const originalAdd = EventTarget.prototype.addEventListener;
+      EventTarget.prototype.addEventListener = function (type, listener, options) {
+        if (type === 'change' && this && this.id === 'regionsScopeCoverageToggle') {
+          window.__regionsToggleChangeBindings++;
+        }
+        return originalAdd.call(this, type, listener, options);
+      };
+    });
+    delayNextDefinitions = true;
+    const lifecycleRequestStart = definitionRequestCount;
+    await lifecyclePage.evaluate(() => { location.hash = '#/regions'; });
+    for (let attempts = 0; attempts < 20 && definitionRequestCount === lifecycleRequestStart; attempts++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert(definitionRequestCount > lifecycleRequestStart, 'delayed Regions load starts before route teardown');
+    await lifecyclePage.evaluate(() => { location.hash = '#/tools'; });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await lifecyclePage.evaluate(() => { location.hash = '#/regions'; });
+    await lifecyclePage.locator('#regionsLegendList .regions-legend-row').first().waitFor();
+    assert.strictEqual(await lifecyclePage.evaluate(() => window.__regionsToggleChangeBindings), 1,
+      'stale Regions overlay load cannot bind to remounted controls');
+    assert.deepStrictEqual(lifecycleErrors, [], 'delayed Regions teardown/remount has no page errors');
+    await lifecycleContext.close();
+
     const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const mobile = await mobileContext.newPage();
     await mobile.goto(base + '/', { waitUntil: 'domcontentloaded' });
@@ -405,7 +673,7 @@ async function clipboardText(page) {
     assert((await mobile.locator('#region-scope-map').boundingBox()).height >= 300, 'mobile map remains usable');
     await mobileContext.close();
 
-    console.log('test-region-scope-e2e.js: all tests passed');
+    console.log('tests/e2e/test-region-scope-e2e.js: all tests passed');
   } finally {
     await browser.close();
     server.close();

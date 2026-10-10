@@ -56,6 +56,7 @@ function makeLeafletMock() {
           map._tileLayers.push(this);
           return this;
         },
+        setUrl(nextUrl) { this.url = nextUrl; },
       };
       return layer;
     },
@@ -89,6 +90,7 @@ function makeSandbox(opts) {
     },
     window: {
       addEventListener: () => {},
+      removeEventListener: () => {},
       dispatchEvent: () => true,
       matchMedia: () => ({ matches: opts.prefersDark !== false, addEventListener: () => {} }),
     },

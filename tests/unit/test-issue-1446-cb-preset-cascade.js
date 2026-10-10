@@ -182,6 +182,12 @@ console.log('\n=== #1446 Scenario 5: clear preset → reverts to server config /
   vm.runInContext(presetsSrc, env.sandbox);
   vm.runInContext(cv2Src, env.sandbox);
   env.sandbox.window._customizerV2.init({ nodeColors: { repeater: '#aaaaaa' } });
+  // Confirm deut is active first. customize-v2 removes the root inline value so
+  // the body[data-cb-preset="deut"] CSS selector owns the effective color.
+  const rootInlineWithPreset = env.root.style.getPropertyValue('--mc-role-repeater').toLowerCase();
+  assert(env.body.getAttribute('data-cb-preset') === 'deut' && rootInlineWithPreset === '',
+    'precondition: deut active and root inline override cleared for preset CSS (got: ' + JSON.stringify(rootInlineWithPreset) + ')');
+
   // Confirm deut is active first.
   const repWithPreset = env.sandbox.getComputedStyle(env.body).getPropertyValue('--mc-role-repeater').toLowerCase();
   assert(repWithPreset === '#fe6100',

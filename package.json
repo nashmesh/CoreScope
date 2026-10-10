@@ -6,7 +6,10 @@
   "scripts": {
     "test": "npx c8 --reporter=text --reporter=text-summary sh test-all.sh",
     "test:manifest": "node scripts/tests/validate-manifest.test.js && node scripts/tests/run-manifest.test.js && node scripts/tests/combined-coverage.test.js && node scripts/tests/e2e-failure-diagnostics.test.js && node scripts/tests/validate-manifest.js",
-    "test:mini-markdown-security": "node test-mini-markdown-security.js",
+    "test:region-scope": "node tests/unit/test-region-scope-helper.js && node tests/unit/test-region-scope-ui.js && node tests/unit/test-region-visibility.js && node tests/unit/test-region-visibility-overlay.js && node tests/unit/test-hash-region-admin.js",
+    "test:region-scope:e2e": "node tests/e2e/test-region-scope-e2e.js",
+    "test:security:markdown": "node tests/unit/test-mini-markdown-security.js",
+    "test:mini-markdown-security": "node tests/unit/test-mini-markdown-security.js",
     "test:unit": "node scripts/tests/run-manifest.js --profile legacy-test-unit && npm run test:mini-markdown-security",
     "test:unit:all-active": "node scripts/tests/run-manifest.js --suite unit --status active",
     "test:integration": "node scripts/tests/run-manifest.js --suite integration --status active",
@@ -15,9 +18,7 @@
     "test:ci:e2e": "node scripts/tests/run-manifest.js --profile ci-e2e-phase",
     "test:audit:all-active": "node scripts/tests/run-manifest.js --status active --list",
     "test:coverage": "sh scripts/combined-coverage.sh --go-only",
-    "test:full-coverage": "sh scripts/combined-coverage.sh",
-    "test:region-scope": "node tests/unit/test-region-scope-helper.js && node tests/unit/test-region-scope-ui.js && node tests/unit/test-hash-region-admin.js",
-    "test:region-scope:e2e": "node tests/e2e/test-region-scope-e2e.js"
+    "test:full-coverage": "sh scripts/combined-coverage.sh"
   },
   "keywords": [],
   "author": "",
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
     "axe-core": "^4.12.1",
+    "istanbul-lib-instrument": "^6.0.3",
     "nyc": "^18.0.0",
     "playwright": "^1.58.2",
     "supertest": "^7.2.2"

@@ -64,6 +64,7 @@ test('instrumentation preserves destination ownership and real nyc coverage unde
   try {
     fs.mkdirSync(path.join(temp, 'public/vendor'), { recursive: true });
     fs.symlinkSync(path.join(repoRoot, 'node_modules'), path.join(temp, 'node_modules'));
+    fs.symlinkSync(path.join(repoRoot, 'scripts'), path.join(temp, 'scripts'));
     fs.writeFileSync(path.join(temp, 'public/probe.js'), 'window.probe = function(value) { return value + 1; }; window.answer = window.probe(41);');
     for (const extension of ['css', 'html', 'svg', 'png']) {
       fs.writeFileSync(path.join(temp, `public/asset.${extension}`), `sentinel ${extension}`);
@@ -100,6 +101,7 @@ test('instrumentation rejects dangling destination symlinks without claiming the
   const absent = path.join(temp, 'absent target');
   fs.symlinkSync(absent, target);
   fs.symlinkSync(path.join(repoRoot, 'node_modules'), path.join(temp, 'node_modules'));
+    fs.symlinkSync(path.join(repoRoot, 'scripts'), path.join(temp, 'scripts'));
   try {
     const result = spawnSync('sh', [path.join(repoRoot, 'scripts/instrument-frontend.sh')], {
       cwd: temp,
@@ -370,6 +372,24 @@ test('instrumentation refuses to overwrite a pre-existing target', () => {
     assert.strictEqual(fs.readFileSync(sentinel, 'utf8'), 'keep me');
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('frontend instrumentation remains compatible with the production CSP', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'corescope-instrument-csp-'));
+  const target = path.join(tempRoot, 'public-instrumented');
+  try {
+    const result = spawnSync('sh', ['scripts/instrument-frontend.sh'], {
+      cwd: repoRoot,
+      env: { ...process.env, INSTRUMENTED_DIR: target },
+      encoding: 'utf8',
+    });
+    assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+    const instrumented = fs.readFileSync(path.join(target, 'payload-labels.js'), 'utf8');
+    assert.doesNotMatch(instrumented, /new Function\s*\(/,
+      'Istanbul global lookup must not require unsafe-eval under the production CSP');
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 

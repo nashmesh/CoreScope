@@ -62,7 +62,9 @@ func (s *PacketStore) StartBridgeScoreRecomputer(interval time.Duration) func() 
 	bridgeRecompStartedMu.Unlock()
 
 	// Initial synchronous prewarm — see comment above.
-	recomputeBridgeScoresSafe(s)
+	s.runMandatoryBackgroundRecompute("bridge-scores", func() bool {
+		return recomputeBridgeScoresSafe(s)
+	})
 
 	var stopOnce sync.Once
 	go func() {
@@ -72,7 +74,10 @@ func (s *PacketStore) StartBridgeScoreRecomputer(interval time.Duration) func() 
 		for {
 			select {
 			case <-t.C:
-				recomputeBridgeScoresSafe(s)
+				_, _ = s.tryBackgroundRecompute("bridge-scores", func() interface{} {
+					recomputeBridgeScoresSafe(s)
+					return struct{}{}
+				})
 			case <-stop:
 				return
 			}
@@ -94,8 +99,15 @@ func (s *PacketStore) StartBridgeScoreRecomputer(interval time.Duration) func() 
 // neighbor graph and installs the result. Panics in compute are
 // swallowed (defensive) so the goroutine never dies; the previous
 // snapshot remains valid.
-func recomputeBridgeScoresSafe(s *PacketStore) {
-	defer func() { _ = recover() }()
+func recomputeBridgeScoresSafe(s *PacketStore) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	if s.backgroundRecomputeBuildHook != nil {
+		s.backgroundRecomputeBuildHook("bridge-scores")
+	}
 	graph := s.graph.Load()
 	if graph == nil {
 		// No graph yet — install an empty map so readers get a defined
@@ -104,12 +116,13 @@ func recomputeBridgeScoresSafe(s *PacketStore) {
 		// yet?" confusion in operator-facing tooling).
 		empty := map[string]float64{}
 		s.bridgeScoreMap.Store(&empty)
-		return
+		return true
 	}
 	now := time.Now()
 	edges := bridgeEdgesFromGraph(graph, now)
 	scores := ComputeBridgeScores(edges)
 	s.bridgeScoreMap.Store(&scores)
+	return true
 }
 
 // bridgeEdgesFromGraph snapshots the NeighborGraph into a flat slice

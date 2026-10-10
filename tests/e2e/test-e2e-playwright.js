@@ -2841,7 +2841,10 @@ async function run() {
   // the full-screen node detail view. Regression: hash already === target,
   // so location.hash assignment was a no-op and the panel stayed open.
   await test('Nodes side panel Details button opens full-screen view', async () => {
-    await page.goto(BASE + '#/nodes', { waitUntil: 'domcontentloaded' });
+    // Force a document navigation instead of a same-document hash transition.
+    // This isolates the node-list bootstrap from packet-detail state left by the
+    // preceding tests in this long-lived page.
+    await page.goto(BASE + '?e2e=nodes-side-panel#/nodes', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('table tbody tr[data-action]', { timeout: 15000 });
     await page.waitForTimeout(500);
     // Open side panel

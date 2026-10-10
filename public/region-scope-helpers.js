@@ -355,12 +355,68 @@
     return input;
   }
 
-  function regionColorToken(index, total, customColor) {
+  function regionNameHashHex(name) {
+    var hash = 0x811c9dc5;
+    var value = String(name || 'region');
+    for (var i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = (hash * 0x01000193) >>> 0;
+    }
+    return ('00000000' + hash.toString(16)).slice(-8);
+  }
+
+  function regionColorSlot(name) {
+    return parseInt(regionNameHashHex(name), 16) % 360;
+  }
+
+  function automaticRegionColor(slot) {
+    return 'oklch(var(--region-scope-auto-lightness) var(--region-scope-auto-chroma) ' + slot + ')';
+  }
+
+  function regionColorToken(name, customColor) {
     var normalizedCustom = String(customColor || '').trim().toLowerCase();
     if (/^#[0-9a-f]{6}$/.test(normalizedCustom)) return normalizedCustom;
-    var safeIndex = Math.max(0, Number(index) || 0);
-    var hue = (safeIndex * 137.50776405003785) % 360;
-    return 'oklch(var(--region-scope-auto-lightness) var(--region-scope-auto-chroma) ' + hue.toFixed(6) + 'deg)';
+    return automaticRegionColor(regionColorSlot(name));
+  }
+
+  // Allocate the active automatic palette as a set. Name hashing supplies a
+  // stable first choice; deterministic linear probing only moves names whose
+  // first-choice hue collides. Preferred names reserve their slots first so
+  // adding observed-only names cannot change configured regions across views.
+  // MeshCore supports at most 32 active regions, well below the 360 slots.
+  function buildRegionColorTable(definitions, preferredNames) {
+    var table = Object.create(null);
+    var usedSlots = new Set();
+    var preferred = new Set(Array.isArray(preferredNames) ? preferredNames : []);
+    var byName = new Map();
+    (Array.isArray(definitions) ? definitions : []).forEach(function (definition) {
+      if (definition && typeof definition.name === 'string' && !byName.has(definition.name)) {
+        byName.set(definition.name, definition);
+      }
+    });
+    Array.from(byName.keys()).sort(function (a, b) {
+      var aPreferred = preferred.has(a);
+      var bPreferred = preferred.has(b);
+      if (aPreferred !== bPreferred) return aPreferred ? -1 : 1;
+      return a.localeCompare(b);
+    }).forEach(function (name) {
+      var definition = byName.get(name);
+      var normalizedCustom = String(definition.color || '').trim().toLowerCase();
+      if (/^#[0-9a-f]{6}$/.test(normalizedCustom)) {
+        table[name] = normalizedCustom;
+        return;
+      }
+      var slot = regionColorSlot(name);
+      var attempts = 0;
+      while (usedSlots.has(slot) && attempts < 360) {
+        slot = (slot + 1) % 360;
+        attempts++;
+      }
+      if (attempts === 360) throw new Error('Automatic region palette supports at most 360 active names.');
+      usedSlots.add(slot);
+      table[name] = automaticRegionColor(slot);
+    });
+    return table;
   }
 
   return {
@@ -376,5 +432,6 @@
     countiesToMultiPolygon: countiesToMultiPolygon,
     parseGeoJSONGeometry: parseGeoJSONGeometry,
     regionColorToken: regionColorToken,
+    buildRegionColorTable: buildRegionColorTable,
   };
 });

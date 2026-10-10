@@ -350,14 +350,26 @@
     showBoundaries();
   }
 
+  function rebuildColorTable() {
+    var table = RegionScopeHelpers.buildRegionColorTable(definitions);
+    colorByName.clear();
+    definitions.forEach(function (definition) {
+      colorByName.set(definition.name, table[definition.name]);
+      var row = rowByName.get(definition.name);
+      if (row) row.root.style.setProperty('--region-scope-color', table[definition.name]);
+    });
+  }
+
+  function refreshThemeColors() {
+    rebuildColorTable();
+    showBoundaries();
+  }
+
   function renderLoadedDefinitions(body, generation) {
     if (generation !== loadGeneration) return;
     definitions = Array.isArray(body) ? body : [];
     definitions.sort(function (a, b) { return a.name.localeCompare(b.name); });
-    colorByName.clear();
-    definitions.forEach(function (definition, index) {
-      colorByName.set(definition.name, RegionScopeHelpers.regionColorToken(index, definitions.length, definition.color));
-    });
+    rebuildColorTable();
     var list = element('region-scope-list');
     list.replaceChildren();
     rowByName.clear();
@@ -498,7 +510,7 @@
       element('region-scope-list').addEventListener('scroll', updateListAffordance);
       listResizeHandler = updateListAffordance;
       window.addEventListener('resize', listResizeHandler);
-      themeColorHandler = showBoundaries;
+      themeColorHandler = refreshThemeColors;
       window.addEventListener('theme-changed', themeColorHandler);
       copyStage('copy-region-mutations', 'region-scope-mutations', 'Region definition command');
       copyStage('copy-region-verification', 'region-scope-verification', 'Verification command');

@@ -81,7 +81,7 @@ window.InfraSummary = {
     const isRelayRole = n.role === 'repeater' || n.role === 'room';
     const pk = encodeURIComponent(n.public_key);
 
-    return `<div class="infrap-card" data-key="${n.public_key}">
+    return `<div class="infrap-card" role="group" aria-label="${escapeHtml(n.name || '(unnamed)')} infrastructure node, ${status}" data-key="${n.public_key}">
       <div class="infrap-card-head">
         <span class="infra-card-status ${status === 'active' ? 'infra-status-active' : 'infra-status-stale'}" title="${status}" role="img" aria-label="${status}"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-circle-fill"/></svg></span>
         <a href="#/nodes/${pk}" class="infrap-name">${escapeHtml(n.name || '(unnamed)')}</a>

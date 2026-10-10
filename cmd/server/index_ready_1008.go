@@ -161,6 +161,9 @@ func (s *PacketStore) maybeCloseIndexReadyCh() {
 func (s *PacketStore) startBackgroundIndexBuilds() {
 	go func() {
 		t0 := time.Now()
+		if s.backgroundIndexBuildHook != nil {
+			s.backgroundIndexBuildHook("subpath")
+		}
 		s.mu.Lock()
 		s.buildSubpathIndex()
 		s.mu.Unlock()
@@ -173,6 +176,9 @@ func (s *PacketStore) startBackgroundIndexBuilds() {
 	}()
 	go func() {
 		t1 := time.Now()
+		if s.backgroundIndexBuildHook != nil {
+			s.backgroundIndexBuildHook("pathHop")
+		}
 		s.mu.Lock()
 		s.buildPathHopIndex()
 		s.mu.Unlock()

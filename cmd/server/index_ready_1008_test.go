@@ -2,21 +2,36 @@
 // synchronous Load() critical path into a background goroutine.
 //
 // Contract:
-//   1. Immediately after Load() returns, SubpathIndexReady() and
-//      PathHopIndexReady() report false (the goroutine has not finished).
-//   2. Analytics handlers that depend on those indices respond 503 with
-//      Retry-After: 5 until the corresponding ready flag flips true.
-//   3. After the background build completes (waitable via a helper),
-//      both flags flip true and handlers respond 200.
+//  1. Immediately after Load() returns, SubpathIndexReady() and
+//     PathHopIndexReady() report false (the goroutine has not finished).
+//  2. Analytics handlers that depend on those indices respond 503 with
+//     Retry-After: 5 until the corresponding ready flag flips true.
+//  3. After the background build completes (waitable via a helper),
+//     both flags flip true and handlers respond 200.
 package main
 
 import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
+
+func holdBackgroundIndexBuilds(store *PacketStore) func() {
+	release := make(chan struct{})
+	var completed sync.WaitGroup
+	completed.Add(2)
+	store.backgroundIndexBuildHook = func(string) {
+		defer completed.Done()
+		<-release
+	}
+	return func() {
+		close(release)
+		completed.Wait()
+	}
+}
 
 // TestIssue1008_SubpathIndexReadyFalseImmediatelyAfterLoad asserts the
 // subpath ready flag is false the instant Load() returns. Red commit: the
@@ -26,9 +41,11 @@ func TestIssue1008_SubpathIndexReadyFalseImmediatelyAfterLoad(t *testing.T) {
 	db := setupRichTestDB(t)
 	defer db.Close()
 	store := NewPacketStore(db, nil)
+	release := holdBackgroundIndexBuilds(store)
 	if err := store.Load(); err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
+	defer release()
 	if store.SubpathIndexReady() {
 		t.Fatal("expected SubpathIndexReady()==false immediately after Load(); want background-deferred build (#1008)")
 	}
@@ -40,9 +57,11 @@ func TestIssue1008_PathHopIndexReadyFalseImmediatelyAfterLoad(t *testing.T) {
 	db := setupRichTestDB(t)
 	defer db.Close()
 	store := NewPacketStore(db, nil)
+	release := holdBackgroundIndexBuilds(store)
 	if err := store.Load(); err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
+	defer release()
 	if store.PathHopIndexReady() {
 		t.Fatal("expected PathHopIndexReady()==false immediately after Load(); want background-deferred build (#1008)")
 	}
@@ -55,9 +74,11 @@ func TestIssue1008_HandlerReturns503WhileSubpathIndexLoading(t *testing.T) {
 	db := setupRichTestDB(t)
 	defer db.Close()
 	store := NewPacketStore(db, nil)
+	release := holdBackgroundIndexBuilds(store)
 	if err := store.Load(); err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
+	defer release()
 	// Don't wait for the background build — we want to observe the
 	// not-ready window.
 	cfg := &Config{}

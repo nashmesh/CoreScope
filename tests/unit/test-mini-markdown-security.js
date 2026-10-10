@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { fromRepositoryRoot } = require('../helpers/repository-root');
 
 const assert = require('assert');
 const fs = require('fs');
@@ -17,7 +18,7 @@ const context = {
   fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
 };
 vm.createContext(context);
-vm.runInContext(fs.readFileSync('public/roles.js', 'utf8'), context);
+vm.runInContext(fs.readFileSync(fromRepositoryRoot('public', 'roles.js'), 'utf8'), context);
 
 const miniMarkdown = context.window.miniMarkdown;
 let passed = 0;

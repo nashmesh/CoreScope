@@ -201,4 +201,11 @@ if (require.main === module) {
   }
   console.log('✓ lint gate: 0 violations across public/** and cmd/**');
   console.log('✓ allowlist: tests/fixtures/policy/emoji-allowlist.txt');
+
+  var infrastructureSrc = fs.readFileSync(path.join(ROOT, 'public', 'infrastructure.js'), 'utf8');
+  assert.ok(
+    /class="infrap-card"[^>]*role="group"[^>]*aria-label="[^"`]*\$\{status\}/.test(infrastructureSrc),
+    'infrastructure cards must expose active/stale status in an accessible group label'
+  );
+  console.log('✓ infrastructure status dots retain an accessible active/stale label');
 }

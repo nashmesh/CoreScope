@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 'use strict';
 
-const { repositoryRoot } = require('../helpers/repository-root');
-
 const assert = require('assert');
 const fs = require('fs');
+const vm = require('vm');
+const { fromRepositoryRoot } = require('../helpers/repository-root');
 
-const index = fs.readFileSync(repositoryRoot + '/public/index.html', 'utf8');
-const app = fs.readFileSync(repositoryRoot + '/public/app.js', 'utf8');
-const scopeJS = fs.readFileSync(repositoryRoot + '/public/region-scope.js', 'utf8');
-const scopeCSS = fs.readFileSync(repositoryRoot + '/public/region-scope.css', 'utf8');
-const adminCSS = fs.readFileSync(repositoryRoot + '/public/admin/admin.css', 'utf8');
-const bottomNav = fs.readFileSync(repositoryRoot + '/public/bottom-nav.js', 'utf8');
-const testAll = fs.readFileSync(repositoryRoot + '/test-all.sh', 'utf8');
-const packageJSON = JSON.parse(fs.readFileSync(repositoryRoot + '/package.json', 'utf8'));
-const adminHTML = fs.readFileSync(repositoryRoot + '/public/admin/hash-regions.html', 'utf8');
-const adminJS = fs.readFileSync(repositoryRoot + '/public/admin/hash-regions.js', 'utf8');
+const index = fs.readFileSync(fromRepositoryRoot('public/index.html'), 'utf8');
+const app = fs.readFileSync(fromRepositoryRoot('public/app.js'), 'utf8');
+const scopeJS = fs.readFileSync(fromRepositoryRoot('public/region-scope.js'), 'utf8');
+const scopeCoverageJS = fs.readFileSync(fromRepositoryRoot('public/scope-coverage.js'), 'utf8');
+const liveJS = fs.readFileSync(fromRepositoryRoot('public/live.js'), 'utf8');
+const regionsJS = fs.readFileSync(fromRepositoryRoot('public/regions.js'), 'utf8');
+const scopeCSS = fs.readFileSync(fromRepositoryRoot('public/region-scope.css'), 'utf8');
+const bottomNav = fs.readFileSync(fromRepositoryRoot('public/bottom-nav.js'), 'utf8');
+const testAll = fs.readFileSync(fromRepositoryRoot('test-all.sh'), 'utf8');
+const packageJSON = JSON.parse(fs.readFileSync(fromRepositoryRoot('package.json'), 'utf8'));
+const testManifest = JSON.parse(fs.readFileSync(fromRepositoryRoot('tests/manifest.json'), 'utf8'));
+const adminHTML = fs.readFileSync(fromRepositoryRoot('public/admin/hash-regions.html'), 'utf8');
+const adminJS = fs.readFileSync(fromRepositoryRoot('public/admin/hash-regions.js'), 'utf8');
+const regionScopeHelpers = require(fromRepositoryRoot('public/region-scope-helpers.js'));
 
 assert.doesNotMatch(index, /data-route="region-scope"/, 'desktop navigation does not expose the helper as its own tab');
 assert.match(app, /href="#\/tools\/region-scope" class="tools-card"/, 'Tools landing page links the helper');
@@ -47,10 +51,12 @@ assert.match(scopeJS, /Nearby border: about/, 'UI identifies nearby border sugge
 assert.match(scopeJS, /item\.reason !== 'nearby'/, 'nearby border suggestions are not selected automatically');
 assert.match(scopeJS, /id="region-scope-list-cue"/, 'available regions includes a visible scroll cue');
 assert.match(scopeJS, /More regions below/, 'scroll cue explicitly tells operators when more regions are below');
-assert.match(scopeJS, /regionColorToken/, 'regions receive deterministic distinct colors');
+assert.match(scopeJS, /buildRegionColorTable\(definitions\)/, 'active region names receive a collision-free color table');
 assert.match(scopeJS, /--region-scope-color/, 'region colors are exposed to list styling');
 assert.match(scopeJS, /getComputedStyle\(probe\)\.color/, 'theme color tokens are resolved before Canvas map rendering');
-assert.match(scopeJS, /addEventListener\('theme-changed', themeColorHandler\)/, 'map colors redraw after theme changes');
+assert.match(scopeJS, /themeColorHandler\s*=\s*refreshThemeColors/, 'theme changes rebuild the color table before redrawing the map');
+assert.match(scopeJS, /row\.root\.style\.setProperty\('--region-scope-color'/, 'theme color rebuilds update existing region rows');
+assert.match(scopeJS, /addEventListener\('theme-changed', themeColorHandler\)/, 'theme colors refresh after theme changes');
 assert.match(scopeJS, /removeEventListener\('theme-changed', themeColorHandler\)/, 'theme color listener is removed on route teardown');
 assert.match(scopeJS, /AbortController|loadGeneration/, 'definition loading guards against stale SPA fetches');
 assert.match(scopeJS, /replaceChildren\(\)|textContent\s*=\s*''/, 'definition target is cleared before append');
@@ -62,11 +68,9 @@ assert.doesNotMatch(bottomNav, /if \(h === 'tools\/region-scope'\) return 'regio
 assert.match(scopeCSS, /@media \(max-width: 800px\)/, 'helper has mobile layout coverage');
 assert.match(scopeCSS, /scrollbar-gutter:\s*stable/, 'available region list reserves visible scrollbar space');
 assert.match(scopeCSS, /region-scope-list-frame\.is-scrollable/, 'scrollable list has a distinct visual treatment');
-assert.match(scopeCSS, /var\(--region-scope-color, var\(--accent\)\)/, 'region cards retain an accent fallback when no assigned color is present');
-assert.match(adminCSS, /var\(--region-tree-depth, 0\)/, 'nested region cards retain a zero-depth fallback when depth is unset');
+assert.match(scopeCSS, /var\(--region-scope-color,\s*var\(--accent\)\)/, 'region cards visibly use assigned colors with a safe pre-initialization fallback');
 assert.match(testAll, /run-manifest\.js --profile local-package-and-test-all/, 'canonical full test runner delegates to the manifest orchestrator');
-const testManifest = JSON.parse(fs.readFileSync(repositoryRoot + '/tests/manifest.json', 'utf8'));
-assert.ok(testManifest.tests.some(test => test.path === 'tests/e2e/test-region-scope-e2e.js' && test.suite === 'e2e' && test.status === 'active'), 'canonical manifest retains real Chromium coverage');
+assert.ok(testManifest.tests.some(test => test.path === 'tests/e2e/test-region-scope-e2e.js' && test.suite === 'e2e' && test.status === 'active'), 'canonical manifest includes real Chromium coverage');
 assert.doesNotMatch(packageJSON.scripts['test:unit'], /region-scope-e2e/, 'fast unit runner does not require a browser');
 
 assert.match(adminHTML, /id="region-editor-list"/, 'admin has structured editor list');
@@ -81,9 +85,176 @@ assert.match(adminJS, /orderDefinitionsParentFirst/, 'admin presents definitions
 assert.match(adminJS, /corescope-hash-regions-version/, 'saving definitions invalidates the public helper cache');
 assert.doesNotMatch(adminJS, /\.innerHTML\s*=\s*[^'"`]/, 'admin does not inject untrusted values through innerHTML');
 
+async function verifyCoverageColors() {
+  const hashColor = {
+    hashToHsl: (hex, theme) => `fallback:${hex}:${theme}`,
+    hashToOutline: (hex, theme) => `outline:${hex}:${theme}`,
+  };
+  const context = {
+    window: { HashColor: hashColor, matchMedia: () => ({ matches: false }) },
+    HashColor: hashColor,
+    document: {
+      documentElement: { getAttribute: () => 'light' },
+      getElementById: () => null,
+    },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    console,
+  };
+  vm.createContext(context);
+  vm.runInContext(scopeCoverageJS, context);
+
+  context.scopeCoverageSetRegionColors([
+    { name: '#us-tn', color: '#12abef' },
+    { name: '#invalid', color: 'blue' },
+  ]);
+  assert.strictEqual(context.scopeCoverageRegionColor('#us-tn'), '#12abef', 'saved Regions-tool color overrides the hash fallback');
+  assert.match(context.scopeCoverageRegionColor('#invalid'), /^fallback:/, 'invalid saved colors retain deterministic fallback');
+  assert.match(context.scopeCoverageRegionColor('#automatic'), /^fallback:/, 'regions without an assigned color retain deterministic fallback');
+  context.window.RegionScopeHelpers = regionScopeHelpers;
+  context.RegionScopeHelpers = regionScopeHelpers;
+  const configuredColor = regionScopeHelpers.buildRegionColorTable([{ name: '#region-32' }])['#region-32'];
+  context.scopeCoverageSetRegionColors(
+    [{ name: '#region-32' }],
+    [{ name: '#region-32' }, { name: '#region-29' }]
+  );
+  assert.strictEqual(
+    context.scopeCoverageRegionColor('#region-32'),
+    configuredColor,
+    'an earlier-sorting observed-only collision cannot move a configured region from its helper color'
+  );
+  assert.notStrictEqual(
+    context.scopeCoverageRegionColor('#region-29'),
+    context.scopeCoverageRegionColor('#region-32'),
+    'coverage allocation keeps configured and observed-only colliding names distinct'
+  );
+  assert.match(scopeCoverageJS, /buildRegionColorTable\(activeDefinitions, configuredNames\)/, 'coverage surfaces reserve configured colors before allocating observed-only names');
+  const authoritativeGeometry = {
+    type: 'Polygon',
+    coordinates: [[[-88, 35], [-87, 35], [-87, 36], [-88, 35]]],
+  };
+  const combined = context.scopeCoverageCombineRegions([
+    { name: '#us-tn', nodeCount: 2, hull: [[35, -88], [40, -70], [36, -87]] },
+    { name: '#relay-only', nodeCount: 1, hull: [[50, -60]] },
+  ], [
+    { name: '#us-tn', color: '#12abef', geometry: authoritativeGeometry },
+    { name: '#configured-empty', color: '#345678', geometry: null },
+  ]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(combined)), [
+    { name: '#us-tn', nodeCount: 2, geometry: authoritativeGeometry },
+    { name: '#configured-empty', nodeCount: 0, geometry: null },
+    { name: '#relay-only', nodeCount: 1, geometry: null },
+  ], 'admin definitions own polygon geometry while relay-only regions retain counts without inferred polygons');
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(context.scopeCoverageGeometryLatLngs(authoritativeGeometry))),
+    [[[35, -88], [35, -87], [36, -87], [35, -88]]],
+    'admin GeoJSON coordinates are converted to Leaflet coordinates without using relay hull points'
+  );
+  assert.match(scopeCoverageJS, /api\('\/config\/hash-region-definitions'/, 'coverage overlay loads Regions-tool color definitions');
+  assert.match(scopeCoverageJS, /var fill = scopeCoverageResolveColor\(scopeCoverageRegionColor\(region\.name\)\)/, 'coverage polygons resolve the shared region color before Canvas rendering');
+  assert.match(scopeCoverageJS, /scopeCoverageGeometryLatLngs\(region\.geometry\)/, 'coverage polygons use saved admin geometry');
+  assert.match(liveJS, /createScopeCoverageOverlay\(/, 'Live map uses the shared coverage overlay');
+  assert.match(regionsJS, /createScopeCoverageOverlay\(/, 'Regions tab uses the shared coverage overlay');
+  assert.match(regionsJS, /scopeCoverageRegionColor\(primaryRegion \|\| regions\[0\]\)/, 'Regions node markers use the selected scope color resolver shared with polygons and legend swatches');
+
+  context.api = async path => {
+    if (path === '/config/hash-region-definitions') throw new Error('definitions unavailable');
+    return { regions: [{ name: '#fallback', nodeCount: 1, hull: [[1, 2]] }] };
+  };
+  const overlay = context.createScopeCoverageOverlay({ on() {}, off() {}, removeLayer() {} }, {
+    checkboxId: 'missing-toggle', labelId: 'missing-label', storageKey: 'test-scope-coverage',
+  });
+  await overlay.load();
+  assert.strictEqual(overlay.getRegions().length, 1, 'definition failure does not suppress scope coverage data');
+
+  const inferredShapeCalls = [];
+  const failedDefinitionToggle = { checked: true, addEventListener() {} };
+  context.document.getElementById = id => id === 'failed-definition-toggle'
+    ? failedDefinitionToggle
+    : (id === 'failed-definition-label' ? { style: {} } : null);
+  context.L = {
+    polygon() { inferredShapeCalls.push('polygon'); return {}; },
+    polyline() { inferredShapeCalls.push('polyline'); return {}; },
+    circleMarker() { inferredShapeCalls.push('circleMarker'); return {}; },
+    layerGroup() { return { addTo() {} }; },
+  };
+  context.api = async path => {
+    if (path === '/config/hash-region-definitions') throw new Error('definitions unavailable');
+    return { regions: [{ name: '#observed-only', nodeCount: 4, hull: [[35, -88], [36, -87], [35, -86]] }] };
+  };
+  const failedDefinitionOverlay = context.createScopeCoverageOverlay({
+    on() {}, off() {}, removeLayer() {}, hasLayer() { return true; },
+  }, {
+    checkboxId: 'failed-definition-toggle', labelId: 'failed-definition-label', storageKey: 'failed-definition-coverage',
+  });
+  await failedDefinitionOverlay.load();
+  assert.deepStrictEqual(inferredShapeCalls, [], 'definition failure cannot render an observed hull as a polygon, line, or marker');
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(failedDefinitionOverlay.getRegions())),
+    [{ name: '#observed-only', nodeCount: 4, geometry: null }],
+    'definition failure preserves observed region membership and counts without treating its hull as geometry'
+  );
+
+  let renderedPolygon = null;
+  const toggle = { checked: true, addEventListener() {} };
+  const label = { style: {} };
+  context.document.getElementById = id => id === 'coverage-toggle' ? toggle : (id === 'coverage-label' ? label : null);
+  context.document.createElement = () => ({ style: {}, remove() {} });
+  context.document.body = { appendChild() {} };
+  context.getComputedStyle = probe => ({
+    color: String(probe.style.color).includes('var(') ? 'oklch(0.58 0.17 42)' : probe.style.color,
+  });
+  context.L = {
+    polygon(latlngs, style) {
+      renderedPolygon = { latlngs, style };
+      return { setStyle() {}, bringToFront() {} };
+    },
+    layerGroup() { return { addTo() {} }; },
+  };
+  context.api = async path => path === '/config/hash-region-definitions'
+    ? [{ name: '#us-tn', color: '#12abef', geometry: authoritativeGeometry }]
+    : { regions: [{ name: '#us-tn', nodeCount: 2, hull: [[35, -88], [40, -70], [36, -87]] }] };
+  const renderedOverlay = context.createScopeCoverageOverlay({
+    on() {}, off() {}, removeLayer() {}, hasLayer() { return true; },
+  }, {
+    checkboxId: 'coverage-toggle', labelId: 'coverage-label', storageKey: 'rendered-scope-coverage',
+  });
+  await renderedOverlay.load();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(renderedPolygon.latlngs)),
+    [[[35, -88], [35, -87], [36, -87], [35, -88]]],
+    'Live and Regions shared overlay renders the saved polygon, not the relay hull');
+  assert.strictEqual(renderedPolygon.style.fillColor, '#12abef', 'saved region color styles the authoritative polygon');
+  assert.strictEqual(renderedOverlay.getRegions()[0].nodeCount, 2, 'out-of-bound relays remain included in the displayed count');
+
+  let automaticPolygon = null;
+  context.L.polygon = (latlngs, style) => {
+    automaticPolygon = { latlngs, style };
+    return { setStyle() {}, bringToFront() {} };
+  };
+  context.api = async path => path === '/config/hash-region-definitions'
+    ? [{ name: '#region-29', geometry: authoritativeGeometry }]
+    : { regions: [
+      { name: '#region-29', nodeCount: 1 },
+      { name: '#region-32', nodeCount: 1 },
+    ] };
+  const automaticOverlay = context.createScopeCoverageOverlay({
+    on() {}, off() {}, removeLayer() {}, hasLayer() { return true; },
+  }, {
+    checkboxId: 'coverage-toggle', labelId: 'coverage-label', storageKey: 'automatic-scope-coverage',
+  });
+  await automaticOverlay.load();
+  assert.doesNotMatch(automaticPolygon.style.fillColor, /var\(/, 'Canvas polygon fill receives a concrete computed color');
+  assert.doesNotMatch(automaticPolygon.style.color, /var\(/, 'Canvas polygon outline receives a concrete computed color');
+}
+
+verifyCoverageColors().then(() => {
+  console.log('tests/unit/test-region-scope-ui.js: all tests passed');
+}).catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
+
 // Exercise the registered production page and click handlers, not extracted copies.
 // DOM/Leaflet seams cover only the browser APIs needed to mount an empty page.
-const vm = require('vm');
 function clipboardPage(options = {}) {
   let nodes = new Map();
   let page;
@@ -146,7 +317,7 @@ function clipboardPage(options = {}) {
   // In a browser, window properties are also global bindings.
   Object.assign(context, context.window);
   context.window = context;
-  vm.runInContext(fs.readFileSync(repositoryRoot + '/public/region-scope-helpers.js', 'utf8'), context);
+  vm.runInContext(fs.readFileSync('public/region-scope-helpers.js', 'utf8'), context);
   vm.runInContext(scopeJS, context);
   const flush = () => new Promise(resolve => setImmediate(resolve));
   return {

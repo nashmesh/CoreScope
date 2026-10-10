@@ -86,6 +86,10 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
         const b = document.querySelector('.brand-logo circle.logo-node-b');
         const before = { a: a.classList.contains('logo-pulse-active'),
                          b: b.classList.contains('logo-pulse-active') };
+        // A live WebSocket message may have pulsed immediately before this
+        // assertion; wait past the 66ms rate gate so the synthetic probe is
+        // deterministic rather than being dropped by unrelated fixture data.
+        await new Promise(r => setTimeout(r, 80));
         window.__corescopeLogo.pulse({ synthetic: true });
         // Class must be present synchronously OR within one rAF (≤16ms).
         await new Promise(r => requestAnimationFrame(() => r()));

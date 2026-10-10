@@ -166,6 +166,50 @@ func TestAnalyticsRecomputerShutdownNoLeak(t *testing.T) {
 		startGoroutines, endGoroutines, startGoroutines-endGoroutines)
 }
 
+func TestBackgroundRecomputeGateSkipsOverlap(t *testing.T) {
+	store := &PacketStore{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	firstDone := make(chan bool, 1)
+
+	go func() {
+		_, ran := store.tryBackgroundRecompute("first", func() interface{} {
+			close(started)
+			<-release
+			return "first-result"
+		})
+		firstDone <- ran
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first recompute did not acquire the gate")
+	}
+
+	secondCalled := false
+	result, ran := store.tryBackgroundRecompute("second", func() interface{} {
+		secondCalled = true
+		return "second-result"
+	})
+	if ran || result != nil || secondCalled {
+		t.Fatalf("overlapping recompute ran: ran=%v result=%v called=%v", ran, result, secondCalled)
+	}
+	if got := store.BackgroundRecomputeSkips(); got != 1 {
+		t.Fatalf("skip telemetry = %d, want 1", got)
+	}
+
+	close(release)
+	if !<-firstDone {
+		t.Fatal("first recompute was unexpectedly skipped")
+	}
+
+	result, ran = store.tryBackgroundRecompute("third", func() interface{} { return "third-result" })
+	if !ran || result != "third-result" {
+		t.Fatalf("gate was not released: ran=%v result=%v", ran, result)
+	}
+}
+
 // runtimeNumGoroutine is wrapped to keep the imports section of the
 // production file minimal.
 func runtimeNumGoroutine() int {

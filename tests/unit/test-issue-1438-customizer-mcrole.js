@@ -168,8 +168,10 @@ console.log('\n=== #1438 FINAL C: server-only key does NOT clobber --mc-role-* (
   const got = env.sandbox.getComputedStyle(env.body).getPropertyValue('--mc-role-companion').toLowerCase();
   assert(got !== '#2563eb',
     '--mc-role-companion is NOT the server-config legacy #2563eb (got ' + got + ')');
+  assert(env.root.style.getPropertyValue('--mc-role-companion') === '',
+    '--mc-role-companion root override is removed so the active preset CSS can win');
   assert(got === '#648fff',
-    '--mc-role-companion still reflects the active preset #648FFF (got ' + got + ')');
+    '--mc-role-companion effective body color remains the shipped deut preset (got ' + got + ')');
 
   // --node-companion CAN take the server value (legacy compat is fine here).
   assert(env.root.style.getPropertyValue('--node-companion').toLowerCase() === '#2563eb',

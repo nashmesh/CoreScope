@@ -15,18 +15,17 @@ import (
 // plenty fresh for an at-a-glance status column.
 const repeaterEnrichmentRecomputerDefaultInterval = 5 * time.Minute
 
-// repeaterEnrichmentPrewarmWait is the upper bound on how long the
-// synchronous prewarm in StartRepeaterEnrichmentRecomputer will wait
-// for the background subpath+pathHop index builds to flip ready before
-// skipping the prewarm. Override in tests via the package-level var.
+// repeaterEnrichmentPrewarmWait bounds each wait for the background
+// subpath+pathHop index builds to flip ready. Startup remains mandatory and
+// retries after an elapsed wait; the bound only permits periodic wakeups.
+// Override in tests via the package-level var.
 //
 // Background (issue #1008 review M1): the prewarm computes against
 // s.byPathHop. If the background index builds haven't finished, the
 // snapshot is built against an empty map and locked into
 // s.repeaterRelayCache for `interval` (default 5min) — every
 // /api/nodes during that window would report relay_count_24h=0. We
-// wait up to this deadline and, on timeout, skip the prewarm entirely
-// so the next ticker fire (which will see ready=true) does the work.
+// wait until the indexes are ready before populating the caches.
 var repeaterEnrichmentPrewarmWait = 60 * time.Second
 
 // StartRepeaterEnrichmentRecomputer is the steady-state background
@@ -70,14 +69,14 @@ func (s *PacketStore) StartRepeaterEnrichmentRecomputer(windowHours float64, int
 	// live.js's SPA bootstrap (issue #1262) hits a populated cache
 	// instead of paying the on-thread rebuild cost.
 	//
-	// Issue #1008 review M1: skip the prewarm if the background
-	// subpath+pathHop index builds haven't finished — otherwise we'd
-	// snapshot against an empty s.byPathHop and serve relay_count_24h=0
-	// for the entire `interval` window. The next ticker fire will pick
-	// up the populated index.
-	if s.WaitIndexesReady(repeaterEnrichmentPrewarmWait) {
-		recomputeRepeaterEnrichmentSafe(s, windowHours)
+	// Issue #1008 review M1: startup must not snapshot against an empty
+	// s.byPathHop. An elapsed wait is only a polling boundary; it must not
+	// turn this mandatory prewarm into a best-effort operation.
+	for !s.WaitIndexesReady(repeaterEnrichmentPrewarmWait) {
 	}
+	s.runMandatoryBackgroundRecompute("repeater-enrichment", func() bool {
+		return recomputeRepeaterEnrichmentSafe(s, windowHours)
+	})
 
 	var stopOnce sync.Once
 	go func() {
@@ -87,7 +86,10 @@ func (s *PacketStore) StartRepeaterEnrichmentRecomputer(windowHours float64, int
 		for {
 			select {
 			case <-t.C:
-				recomputeRepeaterEnrichmentSafe(s, windowHours)
+				_, _ = s.tryBackgroundRecompute("repeater-enrichment", func() interface{} {
+					recomputeRepeaterEnrichmentSafe(s, windowHours)
+					return struct{}{}
+				})
 			case <-stop:
 				return
 			}
@@ -108,8 +110,15 @@ func (s *PacketStore) StartRepeaterEnrichmentRecomputer(windowHours float64, int
 // recomputeRepeaterEnrichmentSafe runs both bulk-cache compute paths
 // behind a panic recover — a panic in compute must not kill the
 // background goroutine (the previous snapshot remains valid).
-func recomputeRepeaterEnrichmentSafe(s *PacketStore, windowHours float64) {
-	defer func() { _ = recover() }()
+func recomputeRepeaterEnrichmentSafe(s *PacketStore, windowHours float64) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	if s.backgroundRecomputeBuildHook != nil {
+		s.backgroundRecomputeBuildHook("repeater-enrichment")
+	}
 	// Write directly to the cache fields under mutex rather than going
 	// through the public Get* helpers — those return the existing
 	// non-nil cache immediately, so calling them here would be a no-op.
@@ -123,4 +132,5 @@ func recomputeRepeaterEnrichmentSafe(s *PacketStore, windowHours float64) {
 	s.repeaterUsefulCache = useful
 	s.repeaterUsefulAt = now
 	s.repeaterEnrichMu.Unlock()
+	return true
 }

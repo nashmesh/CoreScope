@@ -48,8 +48,13 @@ async function gotoLive(page) {
     page.on('pageerror', (e) => console.error('[pageerror]', e.message));
     await step('[375x800] navigate to /live', async () => { await gotoLive(page); });
 
-    // (1) Single-row header, height ≤44px.
+    // (1) Single-row header, height ≤44px. Wait for the live-controls
+    // initializer rather than measuring during its first render under load.
     await step('[375x800] .live-header height ≤44px (single row, no MESH LIVE label, no chart toggle)', async () => {
+      await page.waitForFunction(() => {
+        const h = document.getElementById('liveHeader');
+        return h && h.getBoundingClientRect().height <= 44;
+      }, null, { timeout: 8000 });
       const r = await page.evaluate(() => {
         const h = document.getElementById('liveHeader');
         const r = h.getBoundingClientRect();

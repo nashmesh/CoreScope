@@ -14,7 +14,8 @@
   var nodeLayer = null;
   var destroyed = false;
   var allRegions = []; // last-fetched region list (name/nodeCount), for the legend
-  var activeRegionFilter = null; // region name to isolate, or null = show all
+  var selectedRegions = new Set();
+  var nodeLoadGeneration = 0;
 
   var esc = (typeof escapeHtml === 'function') ? escapeHtml : function (s) { return String(s == null ? '' : s); };
 
@@ -31,71 +32,69 @@
       '<div class="regions-legend" id="regionsLegend" role="region" aria-label="Regions legend">' +
         '<div class="regions-legend-header">' +
           '<span>Regions</span>' +
-          '<button type="button" id="regionsLegendReset" class="regions-legend-reset" style="display:none">Show all</button>' +
+          '<button type="button" id="regionsLegendReset" class="regions-legend-reset">Show all</button>' +
         '</div>' +
         '<div class="regions-legend-list" id="regionsLegendList"></div>' +
       '</div>' +
     '</div>';
   }
 
-  // One legend row per region — swatch, name, node count. Clickable (and
-  // keyboard-activatable) to isolate that region's coverage shape + node
-  // markers; the active row gets a distinct style so it's clear which
-  // filter (if any) is applied.
+  // One checkbox per region controls both its saved boundary and the active
+  // scoped-node markers shown on this page.
   function legendRowHtml(region, isActive) {
-    return '<div class="regions-legend-row' + (isActive ? ' active' : '') + '" data-region="' + esc(region.name) + '" role="button" tabindex="0" aria-pressed="' + (isActive ? 'true' : 'false') + '">' +
+    return '<label class="regions-legend-row' + (isActive ? ' active' : '') + '" data-region="' + esc(region.name) + '">' +
+      '<input type="checkbox" aria-label="Show ' + esc(region.name) + '"' + (isActive ? ' checked' : '') + '>' +
       scopeCoverageRegionSwatchHtml(region.name) +
       '<span class="regions-legend-name">' + esc(region.name) + '</span>' +
       '<span class="regions-legend-count">' + region.nodeCount + '</span>' +
-    '</div>';
+    '</label>';
   }
 
   function renderLegend() {
     var listEl = document.getElementById('regionsLegendList');
-    var resetBtn = document.getElementById('regionsLegendReset');
     if (!listEl) return;
     if (!allRegions.length) {
       listEl.innerHTML = '<div class="regions-legend-empty">No regions configured</div>';
-      if (resetBtn) resetBtn.style.display = 'none';
       return;
     }
     listEl.innerHTML = allRegions.slice()
       .sort(function (a, b) { return a.name.localeCompare(b.name); })
-      .map(function (r) { return legendRowHtml(r, r.name === activeRegionFilter); })
+      .map(function (r) { return legendRowHtml(r, selectedRegions.has(r.name)); })
       .join('');
-    if (resetBtn) resetBtn.style.display = activeRegionFilter ? '' : 'none';
   }
 
-  // Toggling the same region off (click again) clears the filter — matches
-  // how the map-page's own checkboxes behave (click to turn on, click to
-  // turn off), rather than requiring a trip to the separate reset button.
-  function setActiveRegion(name) {
-    activeRegionFilter = (name && name !== activeRegionFilter) ? name : null;
-    if (scopeCoverageOverlay) {
-      if (activeRegionFilter) scopeCoverageOverlay.setRegionFilter(activeRegionFilter);
-      else scopeCoverageOverlay.clearRegionFilter();
-    }
+  // Keep multi-region selection shareable without re-running the SPA route.
+  function writeSelectionToHash() {
+    var params = typeof getHashParams === 'function' ? getHashParams() : new URLSearchParams();
+    scopeCoverageWriteVisibleNames(params, selectedRegions);
+    var query = params.toString();
+    history.replaceState(null, '', location.pathname + location.search + '#/regions' + (query ? '?' + query : ''));
+  }
+
+  function setRegionSelected(name, checked) {
+    if (checked) selectedRegions.add(name); else selectedRegions.delete(name);
+    if (scopeCoverageOverlay) scopeCoverageOverlay.setVisibleRegions(selectedRegions);
+    writeSelectionToHash();
     renderLegend();
-    loadNodes(); // re-filter markers + refit bounds to just the filtered set
+    loadNodes();
   }
 
   function wireLegend() {
     var listEl = document.getElementById('regionsLegendList');
     var resetBtn = document.getElementById('regionsLegendReset');
     if (listEl) {
-      listEl.addEventListener('click', function (e) {
+      listEl.addEventListener('change', function (e) {
         var row = e.target.closest('.regions-legend-row');
-        if (row) setActiveRegion(row.dataset.region);
-      });
-      listEl.addEventListener('keydown', function (e) {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        var row = e.target.closest('.regions-legend-row');
-        if (!row) return;
-        e.preventDefault();
-        setActiveRegion(row.dataset.region);
+        if (row && e.target.type === 'checkbox') setRegionSelected(row.dataset.region, e.target.checked);
       });
     }
-    if (resetBtn) resetBtn.addEventListener('click', function () { setActiveRegion(null); });
+    if (resetBtn) resetBtn.addEventListener('click', function () {
+      selectedRegions = new Set(allRegions.map(function (region) { return region.name; }));
+      if (scopeCoverageOverlay) scopeCoverageOverlay.setVisibleRegions(selectedRegions);
+      writeSelectionToHash();
+      renderLegend();
+      loadNodes();
+    });
   }
 
   // Marker content lists every region a node belongs to (not just one) —
@@ -113,29 +112,23 @@
 
   async function loadNodes() {
     if (!nodeLayer) return;
+    var generation = ++nodeLoadGeneration;
     nodeLayer.clearLayers();
     try {
-      var nodesData = await fetchAllNodes('', { ttl: 30000 });
-      var membership = await api('/scope-coverage/nodes', { ttl: 30000 });
-      if (destroyed) return;
-
-      var regionsByPubkey = {};
-      (membership.nodes || []).forEach(function (n) {
-        regionsByPubkey[n.pubkey.toLowerCase()] = n.regions;
-      });
-
-      var byPubkey = {};
-      (nodesData.nodes || []).forEach(function (n) { byPubkey[n.public_key.toLowerCase()] = n; });
+      var results = await Promise.all([
+        fetchAllNodes('', { ttl: 30000 }),
+        api('/scope-coverage/nodes', { ttl: 30000 })
+      ]);
+      if (destroyed || generation !== nodeLoadGeneration) return;
+      var scopedNodes = scopeCoverageActiveScopedNodes(
+        results[0].nodes || [], (results[1] && results[1].nodes) || [], selectedRegions, getNodeStatus
+      );
 
       var bounds = [];
-      Object.keys(regionsByPubkey).forEach(function (pk) {
-        var node = byPubkey[pk];
+      scopedNodes.forEach(function (entry) {
+        var node = entry.node;
         if (!node || node.lat == null || node.lon == null) return; // no GPS fix — can't be plotted
-        var regions = regionsByPubkey[pk];
-        // Boundary nodes belong to more than one region — keep them when
-        // ANY of their regions matches the active filter, not just their
-        // primary (first-alphabetically) one.
-        if (activeRegionFilter && regions.indexOf(activeRegionFilter) === -1) return;
+        var regions = entry.regions;
         // Primary color = the active filter (if any) so an isolated
         // region's markers always match its own legend swatch, even for
         // boundary nodes whose alphabetically-first membership is a
@@ -143,7 +136,8 @@
         // back to first region alphabetically (server already sorts); the
         // marker can only show one fill color, but hover/click always
         // reveals the complete membership list.
-        var color = scopeCoverageRegionColor(activeRegionFilter || regions[0]);
+        var primaryRegion = regions.find(function (name) { return selectedRegions.has(name); });
+        var color = scopeCoverageRegionColor(primaryRegion || regions[0]);
         var marker = L.circleMarker([node.lat, node.lon], {
           pane: 'regionsNodesPane',
           radius: 7, weight: 2, color: '#222', opacity: 0.8,
@@ -204,9 +198,12 @@
     });
     // Awaited (unlike map.js/live.js's fire-and-forget load()) — the legend
     // needs the resolved region list before it can render anything.
-    await scopeCoverageOverlay.load();
-    allRegions = scopeCoverageOverlay.getRegions();
-    activeRegionFilter = null;
+    var regionsOverlay = scopeCoverageOverlay;
+    var loaded = await regionsOverlay.load();
+    if (!loaded || destroyed || scopeCoverageOverlay !== regionsOverlay) return;
+    allRegions = regionsOverlay.getRegions();
+    selectedRegions = scopeCoverageVisibleNamesFromHash(allRegions, getHashParams());
+    regionsOverlay.setVisibleRegions(selectedRegions);
     renderLegend();
     wireLegend();
 
@@ -228,7 +225,8 @@
     if (map) { try { map.remove(); } catch (e) { /* ignore */ } map = null; }
     nodeLayer = null;
     allRegions = [];
-    activeRegionFilter = null;
+    selectedRegions = new Set();
+    nodeLoadGeneration++;
   }
 
   var _themeRefreshHandler = null;

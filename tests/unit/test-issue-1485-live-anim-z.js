@@ -78,13 +78,18 @@ assert(pathsLayerRe.test(liveSrc),
 
 console.log('\n=== #1485 live anim z-order C: per-shape inheritance ===');
 
-// Upstream 75a38f02 (#1521) moved node pulses from Leaflet into Canvas.
-// Keep both remaining Leaflet shapes and require the migrated pulse surface
-// to remain above markerPane too, rather than restoring obsolete DOM work.
+// The two current animLayer shape sites are the ghost-hop circleMarker and
+// matrix-rain character marker. Pin both concrete classes so removing either
+// site or moving it to the default pane is detected.
 const animAddTo = (liveSrc.match(/\.addTo\(animLayer\)/g) || []).length;
 const pathsAddTo = (liveSrc.match(/\.addTo\(pathsLayer\)/g) || []).length;
-assert(animAddTo >= 2,
-  'animLayer retains ghost and Matrix animation shapes (got ' + animAddTo + ')');
+assert(animAddTo === 2,
+  'animLayer hosts exactly its two current animation shape sites (got ' + animAddTo + ')');
+assert(/L\.circleMarker\(hp\.pos,[\s\S]{0,220}?\.addTo\(animLayer\)/.test(liveSrc),
+  'ghost-hop L.circleMarker shape is added to animLayer');
+assert(/L\.marker\(\[lat, lon\],[\s\S]{0,600}?\.addTo\(animLayer\)/.test(liveSrc),
+  'matrix-character L.marker shape is added to animLayer');
+
 assert(/activePulses\.push\(/.test(liveSrc) && /pulsePt\.x, pulsePt\.y, pulse\.r/.test(liveSrc),
   'node pulses are queued and rendered by the actual Canvas engine');
 const canvasZ = liveSrc.match(/getPane\('animationsPane'\)\.style\.zIndex\s*=\s*(\d+)/);

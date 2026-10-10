@@ -19,13 +19,13 @@ import (
 // in an atomic.Value, refreshed periodically by a background goroutine.
 //
 // Lifecycle:
-//   1. Construct via newAnalyticsRecomputer(...)
-//   2. Call Start() — runs initial compute synchronously, then launches
-//      the recompute goroutine. Initial compute is synchronous so the
-//      first Load() after Start returns never sees a nil cache.
-//   3. Call Load() any number of times concurrently — never blocks
-//      beyond an atomic-pointer load.
-//   4. Call Stop() to terminate the background goroutine cleanly.
+//  1. Construct via newAnalyticsRecomputer(...)
+//  2. Call Start() — runs initial compute synchronously, then launches
+//     the recompute goroutine. Initial compute is synchronous so the
+//     first Load() after Start returns never sees a nil cache.
+//  3. Call Load() any number of times concurrently — never blocks
+//     beyond an atomic-pointer load.
+//  4. Call Stop() to terminate the background goroutine cleanly.
 //
 // Compute func is called WITHOUT any lock held by this struct, so it
 // may freely take any application-level locks it needs.
@@ -172,15 +172,15 @@ func (r *analyticsRecomputer) ComputeRuns() int64 {
 // per-endpoint recompute interval from config.json. Zero values fall
 // back to the defaultInterval passed to StartAnalyticsRecomputers.
 type AnalyticsRecomputeIntervals struct {
-	Topology             time.Duration
-	RF                   time.Duration
-	Distance             time.Duration
-	Channels             time.Duration
-	HashCollisions       time.Duration
-	HashSizes            time.Duration
-	Roles                time.Duration
-	ObserversClockSkew   time.Duration
-	NodesClockSkew       time.Duration
+	Topology           time.Duration
+	RF                 time.Duration
+	Distance           time.Duration
+	Channels           time.Duration
+	HashCollisions     time.Duration
+	HashSizes          time.Duration
+	Roles              time.Duration
+	ObserversClockSkew time.Duration
+	NodesClockSkew     time.Duration
 }
 
 func pickInterval(override, def time.Duration) time.Duration {
@@ -224,41 +224,68 @@ func (s *PacketStore) StartAnalyticsRecomputers(defaultInterval time.Duration, o
 	// Each recomputer wraps the underlying compute* function with the
 	// default arguments. We use computeAnalytics* (not GetAnalytics*) to
 	// bypass the legacy TTL cache layer — the recomputer IS the cache.
+	guarded := func(name string, compute func() interface{}) func() interface{} {
+		var initial atomic.Bool
+		computeWithHook := func() interface{} {
+			if s.backgroundRecomputeBuildHook != nil {
+				s.backgroundRecomputeBuildHook(name)
+			}
+			return compute()
+		}
+		return func() interface{} {
+			if initial.CompareAndSwap(false, true) {
+				var result interface{}
+				s.runMandatoryBackgroundRecompute(name, func() (ok bool) {
+					defer func() {
+						if recover() != nil {
+							result = nil
+							ok = false
+						}
+					}()
+					result = computeWithHook()
+					return result != nil
+				})
+				return result
+			}
+			result, _ := s.tryBackgroundRecompute(name, computeWithHook)
+			return result
+		}
+	}
 	s.recompTopology = newAnalyticsRecomputer(
 		"topology", pickInterval(ov.Topology, defaultInterval),
-		func() interface{} { return s.computeAnalyticsTopology("", "", TimeWindow{}) },
+		guarded("topology", func() interface{} { return s.computeAnalyticsTopology("", "", TimeWindow{}) }),
 	)
 	s.recompRF = newAnalyticsRecomputer(
 		"rf", pickInterval(ov.RF, defaultInterval),
-		func() interface{} { return s.computeAnalyticsRF("", "", TimeWindow{}) },
+		guarded("rf", func() interface{} { return s.computeAnalyticsRF("", "", TimeWindow{}) }),
 	)
 	s.recompDistance = newAnalyticsRecomputer(
 		"distance", pickInterval(ov.Distance, defaultInterval),
-		func() interface{} { return s.computeAnalyticsDistance("", "") },
+		guarded("distance", func() interface{} { return s.computeAnalyticsDistance("", "") }),
 	)
 	s.recompChannels = newAnalyticsRecomputer(
 		"channels", pickInterval(ov.Channels, defaultInterval),
-		func() interface{} { return s.computeAnalyticsChannels("", "", TimeWindow{}) },
+		guarded("channels", func() interface{} { return s.computeAnalyticsChannels("", "", TimeWindow{}) }),
 	)
 	s.recompHashCollisions = newAnalyticsRecomputer(
 		"hash-collisions", pickInterval(ov.HashCollisions, defaultInterval),
-		func() interface{} { return s.computeHashCollisions("", "") },
+		guarded("hash-collisions", func() interface{} { return s.computeHashCollisions("", "") }),
 	)
 	s.recompHashSizes = newAnalyticsRecomputer(
 		"hash-sizes", pickInterval(ov.HashSizes, defaultInterval),
-		func() interface{} { return s.computeAnalyticsHashSizesWithCapability("", "") },
+		guarded("hash-sizes", func() interface{} { return s.computeAnalyticsHashSizesWithCapability("", "") }),
 	)
 	s.recompRoles = newAnalyticsRecomputer(
 		"roles", pickInterval(ov.Roles, defaultInterval),
-		func() interface{} { return s.computeAnalyticsRoles() },
+		guarded("roles", func() interface{} { return s.computeAnalyticsRoles() }),
 	)
 	s.recompObserversClockSkew = newAnalyticsRecomputer(
 		"observers-clock-skew", pickInterval(ov.ObserversClockSkew, defaultInterval),
-		func() interface{} { return s.computeObserverCalibrations() },
+		guarded("observers-clock-skew", func() interface{} { return s.computeObserverCalibrations() }),
 	)
 	s.recompNodesClockSkew = newAnalyticsRecomputer(
 		"nodes-clock-skew", pickInterval(ov.NodesClockSkew, defaultInterval),
-		func() interface{} { return s.computeFleetClockSkew() },
+		guarded("nodes-clock-skew", func() interface{} { return s.computeFleetClockSkew() }),
 	)
 	all := []*analyticsRecomputer{
 		s.recompTopology, s.recompRF, s.recompDistance,

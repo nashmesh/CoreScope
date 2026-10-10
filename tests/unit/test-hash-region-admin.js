@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 'use strict';
-
-const { repositoryRoot } = require('../helpers/repository-root');
+const { fromRepositoryRoot } = require('../helpers/repository-root');
 
 const assert = require('assert');
 const fs = require('fs');
-const core = require('../../public/admin/hash-regions.js');
+const core = require(fromRepositoryRoot('public', 'admin', 'hash-regions.js'));
 
 const hierarchy = [
   { name: '#root', parentName: '', description: 'Root', geometry: null },
@@ -41,13 +40,16 @@ assert.deepStrictEqual(core.orderDefinitionsParentFirst(unordered).map((item) =>
   ['#other', 0], ['#root', 0], ['#child', 1], ['#grandchild', 2],
 ], 'admin rows are ordered as a deterministic parent/child tree with depth metadata');
 
-const countyData = JSON.parse(fs.readFileSync(repositoryRoot + '/public/geo/us-counties.geojson', 'utf8'));
+const countyData = JSON.parse(fs.readFileSync(
+  fromRepositoryRoot('public', 'geo', 'us-counties.geojson'),
+  'utf8'
+));
 const countyStates = new Set(countyData.features.map((feature) => feature.properties.STUSPS));
 ['TN', 'KY', 'AL'].forEach((state) => assert.ok(countyStates.has(state), 'county picker includes ' + state));
 assert.ok(countyData.features.every((feature) => feature.properties.GEOID && feature.properties.STUSPS),
   'US county choices have stable cross-state identifiers');
-const adminHTML = fs.readFileSync(repositoryRoot + '/public/admin/hash-regions.html', 'utf8');
-const adminJS = fs.readFileSync(repositoryRoot + '/public/admin/hash-regions.js', 'utf8');
+const adminHTML = fs.readFileSync(fromRepositoryRoot('public', 'admin', 'hash-regions.html'), 'utf8');
+const adminJS = fs.readFileSync(fromRepositoryRoot('public', 'admin', 'hash-regions.js'), 'utf8');
 assert.match(adminHTML, /id="state-select"[\s\S]*multiple/, 'admin exposes a multi-state county filter');
 assert.match(adminJS, /fetch\('\/geo\/us-counties\.geojson'\)/, 'admin loads the nationwide county dataset');
 assert.match(adminHTML, /id="export-regions-btn"/, 'admin exposes one-file region export');

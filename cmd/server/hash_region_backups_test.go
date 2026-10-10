@@ -47,7 +47,9 @@ func TestAdminHashRegionBackupTrustedLegacyNullImportPreservesSaved(t *testing.T
 					if err != nil {
 						t.Fatal(err)
 					}
-					revision, err := hashRegionDefinitionsRevision(saved)
+					imported := append([]admindb.HashRegionDefinition(nil), saved...)
+					imported[1].Description = "must not import"
+					revision, err := hashRegionImportRevision(mode, imported, saved)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -166,6 +168,14 @@ func TestAdminHashRegionBackupImportDefaultsToMergeAndReplaceRequiresConfirmatio
 		t.Fatalf("apply without dry-run revision status = %d, want 400: %s", missingRevision.Code, missingRevision.Body.String())
 	}
 
+	mergeDryRun := httptest.NewRecorder()
+	srv.handleAdminImportHashRegions(mergeDryRun, httptest.NewRequest(http.MethodPost, "/api/admin/hash-regions/import?dryRun=true", strings.NewReader(backup)))
+	if mergeDryRun.Code != http.StatusOK {
+		t.Fatalf("merge dry-run status = %d, want 200: %s", mergeDryRun.Code, mergeDryRun.Body.String())
+	}
+	if err := json.Unmarshal(mergeDryRun.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
 	merge := httptest.NewRecorder()
 	srv.handleAdminImportHashRegions(merge, httptest.NewRequest(http.MethodPost, "/api/admin/hash-regions/import?expectedRevision="+url.QueryEscape(preview.Revision), strings.NewReader(backup)))
 	if merge.Code != http.StatusOK {
@@ -249,6 +259,71 @@ func TestAdminHashRegionBackupImportRejectsChangesAfterPreview(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, concurrent) {
 		t.Fatalf("stale apply overwrote concurrent definitions: got %#v want %#v", got, concurrent)
+	}
+}
+
+func TestAdminHashRegionBackupImportRejectsPayloadDifferentFromPreview(t *testing.T) {
+	srv := newTestAdminServer(t)
+	before := []admindb.HashRegionDefinition{{Name: "#existing", Description: "must survive"}}
+	if err := srv.admin.ReplaceHashRegionDefinitions(before); err != nil {
+		t.Fatal(err)
+	}
+	previewBackup := `{"kind":"corescope.hash-region-definitions","schemaVersion":1,"hashRegionDefinitions":[{"name":"#previewed","description":"approved"}]}`
+	previewRecorder := httptest.NewRecorder()
+	srv.handleAdminImportHashRegions(previewRecorder, httptest.NewRequest(http.MethodPost, "/api/admin/hash-regions/import?dryRun=true", strings.NewReader(previewBackup)))
+	if previewRecorder.Code != http.StatusOK {
+		t.Fatalf("dry-run status = %d, want 200: %s", previewRecorder.Code, previewRecorder.Body.String())
+	}
+	var preview hashRegionBackupImportResponse
+	if err := json.Unmarshal(previewRecorder.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+
+	differentBackup := `{"kind":"corescope.hash-region-definitions","schemaVersion":1,"hashRegionDefinitions":[{"name":"#different","description":"not approved"}]}`
+	applyRecorder := httptest.NewRecorder()
+	applyURL := "/api/admin/hash-regions/import?expectedRevision=" + url.QueryEscape(preview.Revision)
+	srv.handleAdminImportHashRegions(applyRecorder, httptest.NewRequest(http.MethodPost, applyURL, strings.NewReader(differentBackup)))
+	if applyRecorder.Code != http.StatusConflict {
+		t.Fatalf("different-payload apply status = %d, want 409: %s", applyRecorder.Code, applyRecorder.Body.String())
+	}
+	got, err := srv.admin.ListHashRegionDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, before) {
+		t.Fatalf("different-payload apply mutated definitions: got %#v want %#v", got, before)
+	}
+}
+
+func TestAdminHashRegionBackupImportRejectsModeDifferentFromPreview(t *testing.T) {
+	srv := newTestAdminServer(t)
+	before := []admindb.HashRegionDefinition{{Name: "#existing", Description: "must survive"}}
+	if err := srv.admin.ReplaceHashRegionDefinitions(before); err != nil {
+		t.Fatal(err)
+	}
+	backup := `{"kind":"corescope.hash-region-definitions","schemaVersion":1,"hashRegionDefinitions":[{"name":"#new"}]}`
+	previewRecorder := httptest.NewRecorder()
+	srv.handleAdminImportHashRegions(previewRecorder, httptest.NewRequest(http.MethodPost, "/api/admin/hash-regions/import?mode=merge&dryRun=true", strings.NewReader(backup)))
+	if previewRecorder.Code != http.StatusOK {
+		t.Fatalf("merge dry-run status = %d, want 200: %s", previewRecorder.Code, previewRecorder.Body.String())
+	}
+	var preview hashRegionBackupImportResponse
+	if err := json.Unmarshal(previewRecorder.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+
+	applyRecorder := httptest.NewRecorder()
+	applyURL := "/api/admin/hash-regions/import?mode=replace&confirm=true&expectedRevision=" + url.QueryEscape(preview.Revision)
+	srv.handleAdminImportHashRegions(applyRecorder, httptest.NewRequest(http.MethodPost, applyURL, strings.NewReader(backup)))
+	if applyRecorder.Code != http.StatusConflict {
+		t.Fatalf("different-mode apply status = %d, want 409: %s", applyRecorder.Code, applyRecorder.Body.String())
+	}
+	got, err := srv.admin.ListHashRegionDefinitions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, before) {
+		t.Fatalf("different-mode apply mutated definitions: got %#v want %#v", got, before)
 	}
 }
 

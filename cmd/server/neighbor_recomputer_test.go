@@ -75,6 +75,138 @@ func TestNeighborGraphRecomputerLoadsSnapshot(t *testing.T) {
 	}
 }
 
+func TestNeighborGraphRecomputerStartupWaitsForGateAndLoadsSnapshot(t *testing.T) {
+	resetNeighborRecomputerForTest()
+	defer resetNeighborRecomputerForTest()
+
+	dbPath := filepath.Join(t.TempDir(), "neighbor_startup.db")
+	rw, err := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
+	if _, err := rw.Exec(`CREATE TABLE neighbor_edges (
+		node_a TEXT NOT NULL,
+		node_b TEXT NOT NULL,
+		count INTEGER DEFAULT 1,
+		last_seen TEXT,
+		PRIMARY KEY (node_a, node_b)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rw.Exec(
+		`INSERT INTO neighbor_edges (node_a, node_b, count, last_seen) VALUES (?, ?, ?, ?)`,
+		"startup-a", "startup-b", 3, time.Now().UTC().Format(time.RFC3339),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer d.conn.Close()
+	store := NewPacketStore(d, nil)
+	release := holdBackgroundRecomputeGate(t, store)
+	attempted := observeBackgroundRecomputeAttempt(store)
+
+	returned := make(chan func(), 1)
+	go func() {
+		returned <- store.StartNeighborGraphRecomputer(time.Hour)
+	}()
+	waitForBackgroundRecomputeAttempt(t, attempted, "neighbor-graph-snapshot")
+	select {
+	case stop := <-returned:
+		stop()
+		t.Fatal("startup refresh bypassed the shared background recompute gate")
+	default:
+	}
+	if g := store.graph.Load(); g != nil {
+		t.Fatalf("startup graph was populated while shared gate was held: %d edges", len(g.AllEdges()))
+	}
+
+	release()
+	var stop func()
+	select {
+	case stop = <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("startup refresh did not resume after shared gate release")
+	}
+	defer stop()
+
+	g := store.graph.Load()
+	if g == nil {
+		t.Fatal("startup returned without a neighbor graph snapshot")
+	}
+	if got := len(g.AllEdges()); got != 1 {
+		t.Fatalf("startup graph has %d edges, want 1 from writable fixture", got)
+	}
+}
+
+func TestNeighborGraphSnapshotQueryFailureKeepsPriorGeneration(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "closed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store := NewPacketStore(&DB{conn: db}, nil)
+	prior := NewNeighborGraph()
+	store.graph.Store(prior)
+
+	if store.refreshNeighborGraphFromSnapshot() {
+		t.Fatal("closed database was reported as a successful snapshot load")
+	}
+	if got := store.graph.Load(); got != prior {
+		t.Fatal("query failure replaced the prior neighbor graph generation")
+	}
+}
+
+func TestNeighborGraphMandatoryStartupRetriesFailedBuild(t *testing.T) {
+	resetNeighborRecomputerForTest()
+	defer resetNeighborRecomputerForTest()
+
+	dbPath := filepath.Join(t.TempDir(), "neighbor_retry.db")
+	rw, err := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rw.Close()
+	if _, err := rw.Exec(`CREATE TABLE neighbor_edges (
+		node_a TEXT NOT NULL,
+		node_b TEXT NOT NULL,
+		count INTEGER DEFAULT 1,
+		last_seen TEXT,
+		PRIMARY KEY (node_a, node_b)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rw.Exec(
+		`INSERT INTO neighbor_edges (node_a, node_b, count, last_seen) VALUES (?, ?, ?, ?)`,
+		"recovered-a", "recovered-b", 3, time.Now().UTC().Format(time.RFC3339),
+	); err != nil {
+		t.Fatal(err)
+	}
+	d, err := OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenDB: %v", err)
+	}
+	defer d.conn.Close()
+	store := NewPacketStore(d, nil)
+	prior := NewNeighborGraph()
+	prior.upsertEdge("prior-a", "prior-b", "prior", "observer", nil, time.Now())
+	store.graph.Store(prior)
+
+	exerciseMandatoryStartupRetry(t, store, "neighbor-graph-snapshot",
+		func() func() { return store.StartNeighborGraphRecomputer(time.Hour) },
+		func() bool { return store.graph.Load() == prior },
+		func() bool {
+			got := store.graph.Load()
+			return got != nil && got != prior && len(got.AllEdges()) == 1
+		})
+}
+
 // TestServerStartupRequiresMigratedSchema enforces #1287: the server
 // MUST refuse to start if the ingestor hasn't run schema migrations.
 // AssertReady on a DB missing the required columns returns an error

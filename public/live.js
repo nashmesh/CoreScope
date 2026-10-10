@@ -1154,7 +1154,8 @@
             <label><input type="checkbox" id="liveMultibyteToggle" aria-describedby="multibyteDesc"${multibyteOnly ? ' checked' : ''}> Multibyte only</label>
             <span id="multibyteDesc" class="sr-only">Show only multibyte (≥2-byte path-hash) packets; hide unreliable single-byte traffic</span>
             <label id="liveGeoFilterLabel" style="display:none"><input type="checkbox" id="liveGeoFilterToggle"> Mesh live area</label>
-            <label id="liveScopeCoverageLabel" for="liveScopeCoverageToggle" title="Convex hull of repeaters/rooms that have relayed traffic for each MeshCore hash region — an inferred coverage area, not an authoritative boundary" style="display:none"><input type="checkbox" id="liveScopeCoverageToggle"> Region coverage <span class="badge badge-new">Beta</span></label>
+            <label id="liveScopeCoverageLabel" for="liveScopeCoverageToggle" title="Saved administrator region boundaries" style="display:none"><input type="checkbox" id="liveScopeCoverageToggle"> Region coverage <span class="badge badge-new">Beta</span></label>
+            <div id="liveScopeRegionVisibility" class="live-scope-region-visibility" aria-label="Visible region boundaries" style="display:none"></div>
             <label for="liveCountyOverlayToggle" title="Tennessee county boundaries (reference geography only)"><input type="checkbox" id="liveCountyOverlayToggle"> County lines</label>
             </div>
             <div class="live-toggles">
@@ -1863,7 +1864,40 @@
       checkboxId: 'liveScopeCoverageToggle', labelId: 'liveScopeCoverageLabel',
       storageKey: 'meshcore-live-scope-coverage'
     });
-    scopeCoverageOverlay.load();
+    var liveScopeCoverageOverlay = scopeCoverageOverlay;
+    liveScopeCoverageOverlay.load().then(function (loaded) {
+      if (!loaded || scopeCoverageOverlay !== liveScopeCoverageOverlay) return;
+      var regions = liveScopeCoverageOverlay.getRegions();
+      var selected = scopeCoverageVisibleNamesFromHash(regions, getHashParams());
+      liveScopeCoverageOverlay.setVisibleRegions(selected);
+      var controls = document.getElementById('liveScopeRegionVisibility');
+      if (!controls || !regions.length) return;
+      var coverageToggle = document.getElementById('liveScopeCoverageToggle');
+      function syncRegionVisibilityControls() {
+        controls.style.display = coverageToggle && coverageToggle.checked ? '' : 'none';
+      }
+      syncRegionVisibilityControls();
+      if (coverageToggle) coverageToggle.addEventListener('change', syncRegionVisibilityControls);
+      regions.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (region) {
+        var label = document.createElement('label');
+        var input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = selected.has(region.name);
+        input.setAttribute('aria-label', 'Show ' + region.name + ' boundary');
+        input.addEventListener('change', function () {
+          if (input.checked) selected.add(region.name); else selected.delete(region.name);
+          liveScopeCoverageOverlay.setVisibleRegions(selected);
+          var params = getHashParams();
+          scopeCoverageWriteVisibleNames(params, selected);
+          var base = location.hash.split('?')[0] || '#/live';
+          var query = params.toString();
+          history.replaceState(null, '', location.pathname + location.search + base + (query ? '?' + query : ''));
+        });
+        label.appendChild(input);
+        label.appendChild(document.createTextNode(' ' + region.name));
+        controls.appendChild(label);
+      });
+    });
 
     // Tennessee county boundary overlay — see county-overlay.js. Default off.
     countyOverlay = createCountyOverlay(map);

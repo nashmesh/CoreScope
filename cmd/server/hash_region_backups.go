@@ -113,20 +113,11 @@ func (s *Server) handleAdminImportHashRegions(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to read existing hash regions")
 		return
 	}
-	revision, err := hashRegionDefinitionsRevision(stored)
-	if err != nil {
-		log.Printf("[hash-regions] import revision failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to read existing hash regions")
-		return
-	}
+	expectedRevision := ""
 	if !dryRun {
-		expectedRevision := r.URL.Query().Get("expectedRevision")
+		expectedRevision = r.URL.Query().Get("expectedRevision")
 		if expectedRevision == "" {
 			writeError(w, http.StatusBadRequest, "import requires a current dry-run revision")
-			return
-		}
-		if expectedRevision != revision {
-			writeError(w, http.StatusConflict, "hash regions changed after backup validation; validate the backup again")
 			return
 		}
 	}
@@ -167,6 +158,24 @@ func (s *Server) handleAdminImportHashRegions(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	canonicalImport := make([]admindb.HashRegionDefinition, 0, len(backup.HashRegionDefinitions))
+	definitionsByName := make(map[string]admindb.HashRegionDefinition, len(definitions))
+	for _, definition := range definitions {
+		definitionsByName[definition.Name] = definition
+	}
+	for _, definition := range backup.HashRegionDefinitions {
+		canonicalImport = append(canonicalImport, definitionsByName[normalizeHashRegionName(definition.Name)])
+	}
+	revision, err := hashRegionImportRevision(mode, canonicalImport, stored)
+	if err != nil {
+		log.Printf("[hash-regions] import revision failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to read existing hash regions")
+		return
+	}
+	if !dryRun && expectedRevision != revision {
+		writeError(w, http.StatusConflict, "hash regions changed after backup validation; validate the backup again")
+		return
+	}
 	preserved, removed := 0, 0
 	for name := range storedNames {
 		if !incomingNames[name] {
@@ -197,12 +206,20 @@ func (s *Server) handleAdminImportHashRegions(w http.ResponseWriter, r *http.Req
 	writeJSON(w, response)
 }
 
-func hashRegionDefinitionsRevision(definitions []admindb.HashRegionDefinition) (string, error) {
-	payloads, err := hashRegionDefinitionPayloads(definitions)
+func hashRegionImportRevision(mode string, imported, stored []admindb.HashRegionDefinition) (string, error) {
+	importedPayloads, err := hashRegionDefinitionPayloads(imported)
 	if err != nil {
 		return "", err
 	}
-	encoded, err := json.Marshal(payloads)
+	storedPayloads, err := hashRegionDefinitionPayloads(stored)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(struct {
+		Mode     string                        `json:"mode"`
+		Imported []hashRegionDefinitionPayload `json:"imported"`
+		Stored   []hashRegionDefinitionPayload `json:"stored"`
+	}{Mode: mode, Imported: importedPayloads, Stored: storedPayloads})
 	if err != nil {
 		return "", err
 	}

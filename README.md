@@ -258,6 +258,9 @@ npm run test:manifest
 # Canonical local test/coverage entry point
 npm test
 
+# Playwright E2E (requires running server on localhost:3000)
+node tests/e2e/test-e2e-playwright.js
+
 # Focused manifest profiles
 npm run test:unit
 npm run test:integration

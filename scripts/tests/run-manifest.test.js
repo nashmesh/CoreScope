@@ -220,7 +220,7 @@ test('touch cancellation recovery follows moving rows through the actual E2E hel
 test('#1692 runner installs a supported packet window before module-load capture on both viewports', () => {
   const root = path.resolve(__dirname, '../..');
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'tests/manifest.json'), 'utf8'));
-  const runner = manifest.tests.find(entry => entry.path === 'test-issue-1692-packets-init-parallel-e2e.js' || entry.path.endsWith('/test-issue-1692-packets-init-parallel-e2e.js'));
+  const runner = manifest.tests.find(entry => entry.path.endsWith('/test-issue-1692-packets-init-parallel-e2e.js'));
   assert.ok(runner && runner.status === 'active' && runner.suite === 'e2e');
   const source = fs.readFileSync(path.join(root, runner.path), 'utf8');
   const packets = fs.readFileSync(path.join(root, 'public/packets.js'), 'utf8');
@@ -265,6 +265,15 @@ test('#1692 runner installs a supported packet window before module-load capture
   `;
   const result = require('child_process').spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8' });
   assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+});
+
+test('active region-scope browser contract compiles before launching Chromium', () => {
+  const root = path.resolve(__dirname, '../..');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'tests/manifest.json'), 'utf8'));
+  const runner = manifest.tests.find(entry => entry.path.endsWith('/test-region-scope-e2e.js'));
+  assert.ok(runner && runner.status === 'active' && runner.suite === 'e2e');
+  const filename = path.join(root, runner.path);
+  assert.doesNotThrow(() => new (require('vm').Script)(fs.readFileSync(filename, 'utf8'), { filename }));
 });
 
 test('parses deterministic profile, suite, status, list, and dry-run options', () => {

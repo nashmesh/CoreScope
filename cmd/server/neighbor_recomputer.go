@@ -11,6 +11,7 @@
 package main
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -49,6 +50,10 @@ func (s *PacketStore) StartNeighborGraphRecomputer(interval time.Duration) func(
 	done := make(chan struct{})
 	neighborRecompStartedMu.Unlock()
 
+	// The startup snapshot is mandatory. Wait for the shared allocation-heavy
+	// recompute gate and return only after the read-only DB snapshot is loaded.
+	s.runMandatoryBackgroundRecompute("neighbor-graph-snapshot", s.refreshNeighborGraphFromSnapshot)
+
 	var stopOnce sync.Once
 	go func() {
 		defer close(done)
@@ -57,7 +62,10 @@ func (s *PacketStore) StartNeighborGraphRecomputer(interval time.Duration) func(
 		for {
 			select {
 			case <-t.C:
-				s.refreshNeighborGraphFromSnapshot()
+				_, _ = s.tryBackgroundRecompute("neighbor-graph", func() interface{} {
+					s.refreshNeighborGraphFromSnapshot()
+					return struct{}{}
+				})
 			case <-stop:
 				return
 			}
@@ -77,15 +85,26 @@ func (s *PacketStore) StartNeighborGraphRecomputer(interval time.Duration) func(
 // the read-only DB handle and atomic-swaps a freshly built graph.
 // Panics are swallowed defensively — the previous snapshot remains
 // valid if a read fails.
-func (s *PacketStore) refreshNeighborGraphFromSnapshot() {
-	defer func() { _ = recover() }()
+func (s *PacketStore) refreshNeighborGraphFromSnapshot() (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[neighbor-recompute] panic recovered, keeping previous snapshot: %v", r)
+			ok = false
+		}
+	}()
+	if s.backgroundRecomputeBuildHook != nil {
+		s.backgroundRecomputeBuildHook("neighbor-graph-snapshot")
+	}
 	if s.db == nil || s.db.conn == nil {
-		return
+		return false
 	}
-	g := loadNeighborEdgesFromDB(s.db.conn)
-	if g != nil {
-		s.graph.Store(g)
+	g, err := loadNeighborEdgesSnapshotFromDB(s.db.conn)
+	if err != nil {
+		log.Printf("[neighbor-recompute] snapshot load failed, keeping previous snapshot: %v", err)
+		return false
 	}
+	s.graph.Store(g)
+	return true
 }
 
 // resetNeighborRecomputerForTest is a test helper — production code

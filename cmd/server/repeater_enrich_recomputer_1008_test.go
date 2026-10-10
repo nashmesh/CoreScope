@@ -10,12 +10,10 @@ import (
 	"time"
 )
 
-// TestIssue1008_M1_PrewarmWaitsForIndexes asserts that when the index
-// ready flags are FALSE at the moment StartRepeaterEnrichmentRecomputer
-// is called, the synchronous prewarm does NOT populate
-// repeaterRelayCache (it either waits for ready, or skips). Without the
-// fix the prewarm runs immediately against empty byPathHop and the
-// cache becomes non-nil.
+// TestIssue1008_M1_PrewarmWaitsForIndexes asserts that an elapsed polling
+// timeout does not turn the mandatory startup prewarm into a best-effort
+// operation. Start must remain blocked until the indexes become ready, then
+// return only after both enrichment caches are populated.
 func TestIssue1008_M1_PrewarmWaitsForIndexes(t *testing.T) {
 	db := setupRichTestDB(t)
 	defer db.Close()
@@ -42,28 +40,47 @@ func TestIssue1008_M1_PrewarmWaitsForIndexes(t *testing.T) {
 	store.indexReadyChan = nil
 	store.indexReadyChMu.Unlock()
 
-	// Use a tiny wait so the test runs fast. With the fix in place the
-	// prewarm should time out waiting for ready and SKIP, leaving the
-	// cache untouched. Without the fix it would compute immediately
-	// against the empty byPathHop.
+	// Use a tiny polling wait so this test crosses the old timeout path quickly.
 	prev := repeaterEnrichmentPrewarmWait
-	repeaterEnrichmentPrewarmWait = 50 * time.Millisecond
+	repeaterEnrichmentPrewarmWait = 10 * time.Millisecond
 	defer func() { repeaterEnrichmentPrewarmWait = prev }()
 
-	stop := store.StartRepeaterEnrichmentRecomputer(24, time.Hour)
-	defer stop()
+	returned := make(chan func(), 1)
+	go func() {
+		returned <- store.StartRepeaterEnrichmentRecomputer(24, time.Hour)
+	}()
 
-	// Give the prewarm time to complete (or to skip).
-	time.Sleep(150 * time.Millisecond)
+	// Crossing several polling timeouts must not let startup return with empty
+	// caches.
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case stop := <-returned:
+		stop()
+		t.Fatal("startup returned after index wait timeout instead of remaining blocked")
+	default:
+	}
 
 	store.repeaterEnrichMu.Lock()
-	cached := store.repeaterRelayCache
-	at := store.repeaterRelayAt
+	populatedBeforeReady := store.repeaterRelayCache != nil || store.repeaterUsefulCache != nil
 	store.repeaterEnrichMu.Unlock()
+	if populatedBeforeReady {
+		t.Fatal("startup populated enrichment caches before prerequisite indexes were ready")
+	}
 
-	if cached != nil || !at.IsZero() {
-		t.Fatalf("expected prewarm to SKIP when indexes not ready (cache==nil, at==zero); got cache=%v at=%v (#1008 M1)",
-			cached != nil, at)
+	store.markIndexesReadySync()
+	var stop func()
+	select {
+	case stop = <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("startup did not complete after prerequisite indexes became ready")
+	}
+	defer stop()
+
+	store.repeaterEnrichMu.Lock()
+	populated := store.repeaterRelayCache != nil && store.repeaterUsefulCache != nil
+	store.repeaterEnrichMu.Unlock()
+	if !populated {
+		t.Fatal("startup returned without populating both repeater enrichment caches")
 	}
 }
 

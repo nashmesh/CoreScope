@@ -49,7 +49,9 @@ func (s *PacketStore) StartUsefulnessAxesRecomputer(interval time.Duration) func
 	s.usefulnessAxesRecompMu.Unlock()
 
 	// Initial synchronous prewarm.
-	s.recomputeUsefulnessAxes()
+	s.runMandatoryBackgroundRecompute("usefulness-axes", func() bool {
+		return s.recomputeUsefulnessAxes()
+	})
 
 	var stopOnce sync.Once
 	go func() {
@@ -59,7 +61,10 @@ func (s *PacketStore) StartUsefulnessAxesRecomputer(interval time.Duration) func
 		for {
 			select {
 			case <-t.C:
-				s.recomputeUsefulnessAxes()
+				_, _ = s.tryBackgroundRecompute("usefulness-axes", func() interface{} {
+					s.recomputeUsefulnessAxes()
+					return struct{}{}
+				})
 			case <-stop:
 				return
 			}
@@ -80,12 +85,16 @@ func (s *PacketStore) StartUsefulnessAxesRecomputer(interval time.Duration) func
 // recomputeUsefulnessAxes rebuilds both axis maps over the current neighbor
 // graph and installs them. A panic is recovered AND logged (defensive) so the
 // goroutine never dies silently; the previous snapshots remain valid.
-func (s *PacketStore) recomputeUsefulnessAxes() {
+func (s *PacketStore) recomputeUsefulnessAxes() (ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[usefulness-axes-recompute] panic recovered, keeping previous snapshot: %v", r)
+			ok = false
 		}
 	}()
+	if s.backgroundRecomputeBuildHook != nil {
+		s.backgroundRecomputeBuildHook("usefulness-axes")
+	}
 	graph := s.graph.Load()
 	if graph == nil {
 		// No graph yet — install empty maps so readers get a defined zero.
@@ -95,7 +104,7 @@ func (s *PacketStore) recomputeUsefulnessAxes() {
 		emptyRed := map[string]float64{}
 		s.coverageScoreMap.Store(&emptyCov)
 		s.redundancyScoreMap.Store(&emptyRed)
-		return
+		return true
 	}
 	now := time.Now()
 	edges := bridgeEdgesFromGraph(graph, now)
@@ -103,6 +112,7 @@ func (s *PacketStore) recomputeUsefulnessAxes() {
 	red := ComputeRedundancyScores(edges)
 	s.coverageScoreMap.Store(&cov)
 	s.redundancyScoreMap.Store(&red)
+	return true
 }
 
 // UsefulnessAxesComputed reports whether the structural-axis recomputer has

@@ -29,12 +29,23 @@ import (
 // and builds an in-memory NeighborGraph. Called on server startup and
 // from the recompNeighborGraph background recomputer (#1287).
 func loadNeighborEdgesFromDB(conn *sql.DB) *NeighborGraph {
+	g, err := loadNeighborEdgesSnapshotFromDB(conn)
+	if err != nil {
+		log.Printf("[neighbor] failed to load neighbor_edges: %v", err)
+		return NewNeighborGraph()
+	}
+	return g
+}
+
+// loadNeighborEdgesSnapshotFromDB distinguishes a valid empty snapshot from a
+// failed query/scan so periodic refreshes never replace a prior graph with an
+// error-shaped empty generation.
+func loadNeighborEdgesSnapshotFromDB(conn *sql.DB) (*NeighborGraph, error) {
 	g := NewNeighborGraph()
 
 	rows, err := conn.Query("SELECT node_a, node_b, count, last_seen FROM neighbor_edges")
 	if err != nil {
-		log.Printf("[neighbor] failed to load neighbor_edges: %v", err)
-		return g
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -44,7 +55,7 @@ func loadNeighborEdgesFromDB(conn *sql.DB) *NeighborGraph {
 		var cnt int
 		var lastSeen sql.NullString
 		if err := rows.Scan(&a, &b, &cnt, &lastSeen); err != nil {
-			continue
+			return nil, err
 		}
 		ts := time.Time{}
 		if lastSeen.Valid {
@@ -90,6 +101,9 @@ func loadNeighborEdgesFromDB(conn *sql.DB) *NeighborGraph {
 		g.mu.Unlock()
 		count++
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	if count > 0 {
 		g.mu.Lock()
@@ -98,7 +112,7 @@ func loadNeighborEdgesFromDB(conn *sql.DB) *NeighborGraph {
 		log.Printf("[neighbor] loaded %d edges from neighbor_edges table", count)
 	}
 
-	return g
+	return g, nil
 }
 
 // neighborEdgesTableExists returns true when neighbor_edges contains at

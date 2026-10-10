@@ -211,6 +211,17 @@ type PacketStore struct {
 	recompRoles           *analyticsRecomputer
 	recompObserversClockSkew *analyticsRecomputer
 	recompNodesClockSkew     *analyticsRecomputer
+	// backgroundRecomputeGate prevents the large temporary allocations from
+	// analytics and neighbor-graph refreshes from overlapping. The channel is
+	// initialized lazily because focused tests construct PacketStore directly.
+	backgroundRecomputeGateOnce    sync.Once
+	backgroundRecomputeGate        chan struct{}
+	backgroundRecomputeSkips       atomic.Int64
+	// Test-only, per-store synchronization and failure-injection seams. They
+	// are configured before recomputers start and remain nil in production.
+	backgroundRecomputeAttemptHook func(string)
+	backgroundRecomputeBuildHook   func(string)
+	backgroundIndexBuildHook       func(string)
 	cacheHits    int64
 	cacheMisses  int64
 	// Rate-limited invalidation (fixes #533: caches cleared faster than hit)
