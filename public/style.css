@@ -1095,6 +1095,17 @@ img.brand-logo {
   max-width: 0; /* forces td to respect table width instead of expanding to content */
 }
 .data-table td.col-details { white-space: normal; word-break: break-word; max-width: 480px; }
+/* The virtual scroller assumes a stable row height at every viewport. Keep the
+ * preview itself to one line so a narrow Details allocation cannot make a
+ * long packet summary grow the entire row beside an otherwise-clipped path. */
+.data-table td.col-details > .col-details-clip {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* #1415: pin the expand-chevron column narrow at every viewport.
  * Chevron glyph is ~16px wide; legacy column auto-sized to 50-180px and shoved every
  * downstream data column right. 32px is enough for the ▶/▼ + 8px padding. */
@@ -1540,7 +1551,10 @@ body.scroll-locked { overflow: hidden; }
 
 /* === Path display === */
 .path-hops {
-  display: inline-flex; align-items: center; gap: 2px; font-family: var(--mono); font-size: 11px;
+  /* A block-level flex track gives the table a bounded path-cell contribution.
+   * Inline flex uses its max-content width during automatic table layout, which
+   * can let a multi-hop fixture expand the row despite the cell's overflow. */
+  display: flex; align-items: center; gap: 2px; width: 100%; min-width: 0; height: 22px; font-family: var(--mono); font-size: 11px;
   /* #1122: never wrap; clip so a long hop chain cannot spill into the next row */
   flex-wrap: nowrap;
   max-width: 100%;

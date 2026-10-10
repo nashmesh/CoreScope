@@ -121,6 +121,9 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
     const page = await ctx.newPage();
     page.setDefaultTimeout(8000);
     page.on('pageerror', (e) => console.error('[pageerror]', e.message));
+    // This ordered-suite fixture can be older than the default 15 minutes.
+    // Honor the mobile/tablet 180-minute cap while retaining real packet rows.
+    await page.addInitScript(() => localStorage.setItem('meshcore-time-window', '180'));
     await page.goto(BASE + '/#/packets', { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('#pktTable tbody tr[data-action]', { timeout: 8000 });
 

@@ -20,6 +20,21 @@ const BASE = process.env.BASE_URL || 'http://localhost:13581';
 const CLICK_TIMEOUT = 100;   // ms — elements exist immediately or not at all
 const NAV_WAIT = 50;         // ms — SPA hash routing is instant
 
+function validateCoverageResults(results) {
+  const failedGroups = [];
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status === 'rejected') {
+      failedGroups.push(`group ${i + 1}: ${result.reason?.message || result.reason}`);
+    } else if (!result.value || Object.keys(result.value).length === 0) {
+      failedGroups.push(`group ${i + 1}: no coverage`);
+    }
+  }
+  if (failedGroups.length > 0) {
+    throw new Error(`Incomplete frontend coverage collection: ${failedGroups.join('; ')}`);
+  }
+}
+
 async function run() {
   const browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
@@ -860,35 +875,28 @@ async function run() {
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`All groups completed in ${elapsed}s`);
 
-  // ── Merge coverage ─────────────────────────────────────────────────
+  await browser.close();
+  validateCoverageResults(results);
+
+  // ── Write complete coverage ─────────────────────────────────────────
   const outDir = path.join(__dirname, '..', '.nyc_output');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  let fileIndex = 0;
   let totalFiles = 0;
   for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (r.status === 'fulfilled' && r.value) {
-      const fname = `frontend-coverage-g${i + 1}.json`;
-      fs.writeFileSync(path.join(outDir, fname), JSON.stringify(r.value));
-      const count = Object.keys(r.value).length;
-      totalFiles = Math.max(totalFiles, count);
-      fileIndex++;
-      console.log(`  Group ${i + 1}: ${count} instrumented files`);
-    } else if (r.status === 'rejected') {
-      console.log(`  Group ${i + 1}: FAILED — ${r.reason?.message || r.reason}`);
-    } else {
-      console.log(`  Group ${i + 1}: no coverage (not instrumented?)`);
-    }
+    const coverage = results[i].value;
+    const fname = `frontend-coverage-g${i + 1}.json`;
+    fs.writeFileSync(path.join(outDir, fname), JSON.stringify(coverage));
+    const count = Object.keys(coverage).length;
+    totalFiles = Math.max(totalFiles, count);
+    console.log(`  Group ${i + 1}: ${count} instrumented files`);
   }
 
-  if (fileIndex === 0) {
-    console.log('WARNING: No __coverage__ found in any group — instrumentation may have failed');
-  } else {
-    console.log(`Frontend coverage collected: ${fileIndex} groups, ${totalFiles} instrumented files`);
-  }
-
-  await browser.close();
+  console.log(`Frontend coverage collected: ${results.length} groups, ${totalFiles} instrumented files`);
 }
 
-run().catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) {
+  run().catch(e => { console.error(e); process.exit(1); });
+}
+
+module.exports = { validateCoverageResults };

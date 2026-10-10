@@ -129,10 +129,40 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
       let maxH = 0, maxHops = 0, offenders = [];
       for (const c of cells) {
         const r = c.getBoundingClientRect();
+        const row = c.parentElement;
+        const rowRect = row.getBoundingClientRect();
+        const host = c.querySelector('.path-hops');
+        const details = row.querySelector('.col-details');
+        const detailsClip = row.querySelector('.col-details-clip');
         const hops = c.querySelectorAll('.hop, .hop-named').length;
         if (r.height > maxH) maxH = r.height;
         if (hops > maxHops) maxHops = hops;
-        if (r.height >= 60) offenders.push({ height: r.height, hops });
+        if (r.height >= 60) offenders.push({
+          height: r.height,
+          rowHeight: rowRect.height,
+          width: r.width,
+          hops,
+          path: host ? {
+            height: host.getBoundingClientRect().height,
+            width: host.getBoundingClientRect().width,
+            scrollWidth: host.scrollWidth,
+            display: getComputedStyle(host).display,
+            overflow: getComputedStyle(host).overflow,
+          } : null,
+          details: details ? {
+            height: details.getBoundingClientRect().height,
+            width: details.getBoundingClientRect().width,
+            scrollWidth: details.scrollWidth,
+            whiteSpace: getComputedStyle(details).whiteSpace,
+          } : null,
+          detailsClip: detailsClip ? {
+            height: detailsClip.getBoundingClientRect().height,
+            width: detailsClip.getBoundingClientRect().width,
+            scrollWidth: detailsClip.scrollWidth,
+            whiteSpace: getComputedStyle(detailsClip).whiteSpace,
+            overflow: getComputedStyle(detailsClip).overflow,
+          } : null,
+        });
       }
       return { maxH, maxHops, offenders: offenders.slice(0, 5), totalCells: cells.length };
     });

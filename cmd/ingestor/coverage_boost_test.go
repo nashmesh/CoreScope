@@ -39,7 +39,7 @@ func TestNodeDaysOrDefault(t *testing.T) {
 		{"one day", Config{Retention: &RetentionConfig{NodeDays: 1}}, 1},
 	}
 	for i := range tests {
-		tt := &tests[i]
+		tt := &tests[i] // Config contains sync.Once; never copy the lock in range.
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.cfg.NodeDaysOrDefault()
 			if got != tt.want {

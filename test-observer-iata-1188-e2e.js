@@ -13,6 +13,31 @@
 const { chromium } = require('playwright');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
+let diagnosticPage;
+
+async function captureTableLayout() {
+  if (!diagnosticPage) return;
+  const metrics = await diagnosticPage.evaluate(() => {
+    const measure = el => {
+      const style = getComputedStyle(el), box = el.getBoundingClientRect();
+      return { tag: el.tagName, display: style.display, visibility: style.visibility,
+        width: box.width, height: box.height, x: box.x, y: box.y,
+        hidden: el.hidden, inPacketsPage: !!el.closest('#page-packets') };
+    };
+    const rows = [...document.querySelectorAll('table tbody tr:not([id^=vscroll])')];
+    return { viewport: { width: innerWidth, height: innerHeight }, rowCount: rows.length,
+      tables: [...document.querySelectorAll('table')].map(measure),
+      rows: rows.slice(0, 3).map(row => {
+        const ancestors = [];
+        for (let el = row.parentElement; el && ancestors.length < 8; el = el.parentElement)
+          ancestors.push(measure(el));
+        return { ...measure(row), cells: [...row.cells].map(measure), ancestors };
+      }) };
+  }).catch(() => ({ probeUnavailable: true }));
+  // Geometry and visibility only: never persist DOM text, raw attributes,
+  // packet identities, URLs, or client/network details.
+  console.log('IATA layout evidence:', JSON.stringify(metrics));
+}
 
 async function test(name, fn) {
   try {
@@ -20,6 +45,7 @@ async function test(name, fn) {
     console.log(`  \u2705 ${name}`);
   } catch (err) {
     console.log(`  \u274c ${name}: ${err.message}`);
+    await captureTableLayout();
     process.exit(1);
   }
 }
@@ -36,6 +62,7 @@ async function run() {
   });
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await ctx.newPage();
+  diagnosticPage = page;
   page.setDefaultTimeout(15000);
 
   console.log(`\nRunning observer-IATA E2E tests against ${BASE}\n`);
@@ -96,9 +123,13 @@ async function run() {
     //       Observer row + .badge-iata next to the observer name.
     const mobile = await browser.newContext({ viewport: { width: 375, height: 812 } });
     const mpage = await mobile.newPage();
+    diagnosticPage = mpage;
     mpage.setDefaultTimeout(15000);
     await mpage.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });
-    await mpage.evaluate(() => localStorage.setItem('meshcore-time-window', '525600'));
+    // Mobile intentionally rejects windows above 180 minutes and resets them
+    // to 15. A late canonical entry outlives that 15-minute fixture freshness;
+    // use the supported mobile window instead of weakening the production cap.
+    await mpage.evaluate(() => localStorage.setItem('meshcore-time-window', '180'));
     await mpage.reload({ waitUntil: 'load' });
     await mpage.waitForSelector('[data-loaded="true"]', { timeout: 20000 });
     await mpage.waitForSelector('table tbody tr:not([id^=vscroll])', { timeout: 15000 });
@@ -112,8 +143,10 @@ async function run() {
       'observer column should be hidden in rows at 375px (tier-3, desktop-only per #1415 spec)');
 
     // (b) tap first row → detail panel renders observer + IATA badge
-    const firstRow = await mpage.$('table tbody tr[data-hash]');
-    assert(firstRow, 'no packet row found to tap');
+    // A live/virtualized table can replace rows after load. A locator re-resolves
+    // the current row instead of clicking a detached ElementHandle snapshot.
+    const firstRow = mpage.locator('#pktBody tr[data-hash]').first();
+    assert(await firstRow.count(), 'no packet row found to tap');
     await firstRow.click();
     await mpage.waitForSelector('.detail-meta', { timeout: 10000 });
     const detailIata = await mpage.$('.detail-meta .badge-iata');

@@ -60,6 +60,22 @@ const mobileBlocks = extractAllMediaBlocks(cssSrc, '@media (max-width: 640px)');
 
 console.log('\n=== #1770: .col-details clamps to one line under mobile breakpoint ===');
 
+// The packets table also virtualizes desktop/tablet rows. The canonical
+// desktop-width fixture can allocate a narrow Details cell beside a long path,
+// so the inner preview must clamp before the mobile breakpoint applies.
+const mobileBreakpointIndex = cssSrc.indexOf('@media (max-width: 640px)');
+const baseClipIndex = cssSrc.indexOf('.data-table td.col-details > .col-details-clip');
+const baseCss = baseClipIndex === -1 || mobileBreakpointIndex === -1 || baseClipIndex > mobileBreakpointIndex
+  ? ''
+  : cssSrc.slice(baseClipIndex);
+const baseClipMatch = baseCss.match(/\.data-table td\.col-details > \.col-details-clip\s*\{([^{}]*)\}/);
+assert(!!baseClipMatch, 'base .col-details-clip rule exists for non-mobile packet rows');
+if (baseClipMatch) {
+  assert(/white-space\s*:\s*nowrap/.test(baseClipMatch[1]), 'base clip keeps Details preview to one line');
+  assert(/overflow\s*:\s*hidden/.test(baseClipMatch[1]), 'base clip hides Details overflow');
+  assert(/text-overflow\s*:\s*ellipsis/.test(baseClipMatch[1]), 'base clip ellipsizes Details overflow');
+}
+
 assert(mobileBlocks.length > 0, '`@media (max-width: 640px)` block(s) found in style.css');
 
 if (mobileBlocks.length > 0) {

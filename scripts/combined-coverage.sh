@@ -1,10 +1,17 @@
 #!/bin/sh
-# Combined coverage: Go backend + frontend via Playwright
-# TODO: Update to use Go server binary instead of removed Node.js server.
-# The old flow used `node server.js` — now use the Go binary from cmd/server/.
-set -e
+# Combined Go and instrumented-frontend coverage for CoreScope.
+set -eu
 
-echo "⚠️  combined-coverage.sh needs updating for Go server migration."
-echo "   The Node.js server (server.js) has been removed."
-echo "   Update this script to start the Go binary instead."
-exit 1
+SCRIPT_PATH=$0
+while [ -L "$SCRIPT_PATH" ]; do
+  LINK_TARGET=$(readlink "$SCRIPT_PATH")
+  case "$LINK_TARGET" in
+    /*) SCRIPT_PATH=$LINK_TARGET ;;
+    *) SCRIPT_PATH=$(dirname -- "$SCRIPT_PATH")/$LINK_TARGET ;;
+  esac
+done
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+COMBINED_COVERAGE_REPO_ROOT=${COMBINED_COVERAGE_REPO_ROOT:-$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)}
+export COMBINED_COVERAGE_REPO_ROOT
+. "$SCRIPT_DIR/combined-coverage-lib.sh"
+main "$@"

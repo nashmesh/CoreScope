@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -57,6 +59,10 @@ func resolveBuildTime() string {
 		return BuildTime
 	}
 	return "unknown"
+}
+
+func httpListenAddress(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // waitForObservationsTable blocks (bounded) until dbPath's observations
@@ -143,18 +149,22 @@ func main() {
 	}
 
 	var (
-		configDir string
-		port      int
-		dbPath    string
-		publicDir string
-		pollMs    int
+		configDir       string
+		host            string
+		port            int
+		dbPath          string
+		publicDir       string
+		pollMs          int
+		staticTraceFile string
 	)
 
 	flag.StringVar(&configDir, "config-dir", ".", "Directory containing config.json")
+	flag.StringVar(&host, "host", "", "HTTP bind host (empty binds all interfaces)")
 	flag.IntVar(&port, "port", 0, "HTTP port (overrides config)")
 	flag.StringVar(&dbPath, "db", "", "SQLite database path (overrides config/env)")
 	flag.StringVar(&publicDir, "public", "public", "Directory to serve static files from")
 	flag.IntVar(&pollMs, "poll-ms", 1000, "SQLite poll interval for WebSocket broadcast (ms)")
+	flag.StringVar(&staticTraceFile, "static-trace-file", "", "Optional local JSONL file for completed static request timing diagnostics")
 	flag.Parse()
 
 	// Load config
@@ -492,7 +502,17 @@ func main() {
 	}).Methods("GET")
 	if _, err := os.Stat(absPublic); err == nil {
 		fs := http.FileServer(http.Dir(absPublic))
-		router.PathPrefix("/").Handler(wsOrStatic(hub, spaHandler(absPublic, fs)))
+		staticHandler := spaHandler(absPublic, fs)
+		if staticTraceFile != "" {
+			tracedHandler, closeTrace, err := staticTraceHandler(staticTraceFile, staticHandler)
+			if err != nil {
+				log.Fatalf("[static] trace setup failed: %v", err)
+			}
+			defer closeTrace()
+			staticHandler = tracedHandler
+			log.Printf("[static] trace enabled at %s", staticTraceFile)
+		}
+		router.PathPrefix("/").Handler(wsOrStatic(hub, staticHandler))
 		log.Printf("[static] serving %s", absPublic)
 	} else {
 		log.Printf("[static] directory %s not found — API-only mode", absPublic)
@@ -625,7 +645,7 @@ func main() {
 		log.Printf("[server] WebSocket permessage-deflate compression enabled")
 	}
 	httpServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Port),
+		Addr:         httpListenAddress(host, cfg.Port),
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,

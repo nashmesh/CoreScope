@@ -110,6 +110,11 @@ function assertSpriteHasM2Icons() {
 }
 
 function main() {
+  for (const surface of ['nodes.js', 'infrastructure.js']) {
+    const source = fs.readFileSync(path.join(ROOT, surface), 'utf8');
+    assert.ok(/infra-card-status[^\n]*role="img"[^\n]*aria-label="\$\{status\}"[^\n]*aria-hidden="true"[^\n]*#ph-circle-fill/.test(source),
+      `${surface}: visual status dot must retain a named active/stale semantic wrapper`);
+  }
   let failed = 0;
   console.log('— Issue #1648 M2 — emoji/misc-icon scan');
 

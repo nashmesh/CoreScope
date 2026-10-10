@@ -141,9 +141,11 @@
       document.body.style.overflow = 'hidden';
     }
 
-    // Focus first swatch for keyboard accessibility
+    // Focus first swatch synchronously. Deferring this with setTimeout lets an
+    // immediate arrow-key action move focus and then get overwritten by the
+    // delayed callback, so Enter can assign the wrong color.
     var firstSwatch = el.querySelector('.cc-swatch');
-    if (firstSwatch) setTimeout(function() { firstSwatch.focus(); }, 0);
+    if (firstSwatch) firstSwatch.focus();
 
     // Listen for outside click / Escape
     setTimeout(function() {

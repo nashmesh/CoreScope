@@ -3045,19 +3045,22 @@
     // If we have a current observation, build pkt fields from it so summary is per-observation
     const effectivePkt = currentObs ? clearParsedCache({...pkt, ...currentObs, _isObservation: true}) : pkt;
     const decoded = getParsedDecoded(effectivePkt) || {};
-    const pathHops = getParsedPath(effectivePkt) || [];
+    const reportedPathHops = getParsedPath(effectivePkt) || [];
+    const detailRawHex = effectivePkt.raw_hex || pkt.raw_hex || '';
+    const wirePathHops = getWirePathHops(detailRawHex, pkt.route_type);
+    const pathHops = wirePathHops === null ? reportedPathHops : wirePathHops;
 
     // Compute breakdown ranges from the actually-rendered raw_hex (per-observation).
     // Single source of truth — derived from the same bytes we display, so a
     // post-#882 per-obs raw_hex with a different path length than the top-level
     // packet's raw_hex still gets accurate byte highlights.
-    const obsRawHexForRanges = effectivePkt.raw_hex || pkt.raw_hex || '';
+    const obsRawHexForRanges = detailRawHex;
     const ranges = obsRawHexForRanges
       ? computeBreakdownRanges(obsRawHexForRanges, pkt.route_type, pkt.payload_type)
       : [];
 
     // Cross-check: hop count from raw_hex path_len byte vs path_json length
-    const obsRawHex = effectivePkt.raw_hex || pkt.raw_hex || '';
+    const obsRawHex = detailRawHex;
     let rawHopCount = null;
     if (obsRawHex.length >= 4) {
       // path_len byte position depends on route type
@@ -3065,8 +3068,8 @@
       const plByte = parseInt(obsRawHex.slice(plOff * 2, plOff * 2 + 2), 16);
       if (!isNaN(plByte)) rawHopCount = plByte & 0x3F;
     }
-    if (rawHopCount != null && pathHops.length !== rawHopCount) {
-      console.warn(`[CoreScope] Hop count inconsistency for packet ${pkt.hash}: path_json has ${pathHops.length} hops but raw_hex path_len has ${rawHopCount}. UI shows path_json.`);
+    if (rawHopCount != null && reportedPathHops.length !== rawHopCount) {
+      console.warn(`[CoreScope] Hop count inconsistency for packet ${pkt.hash}: path_json has ${reportedPathHops.length} hops but raw_hex path_len has ${rawHopCount}. Packet detail displays use raw_hex.`);
     }
 
     // Resolve sender GPS — from packet directly, or from known node in DB
@@ -3092,9 +3095,9 @@
     // Resolve hops: prefer server-side resolved_path, fall back to client-side HopResolver
     if (pathHops.length) {
       try {
-        const serverResolved = getResolvedPath(pkt);
+        const serverResolved = getResolvedPath(effectivePkt);
         let resolved;
-        if (serverResolved && serverResolved.length === pathHops.length) {
+        if (canUseResolvedPath(pathHops, reportedPathHops, serverResolved)) {
           await ensureHopResolver();
           resolved = HopResolver.resolveFromServer(pathHops, serverResolved);
         } else {
@@ -3112,7 +3115,7 @@
 
     // Parse hash size from path byte
     const plOff = getPathLenOffset(pkt.route_type);
-    const rawPathByte = pkt.raw_hex ? parseInt(pkt.raw_hex.slice(plOff * 2, plOff * 2 + 2), 16) : NaN;
+    const rawPathByte = detailRawHex ? parseInt(detailRawHex.slice(plOff * 2, plOff * 2 + 2), 16) : NaN;
     const hashSize = (isNaN(rawPathByte) || (rawPathByte & 0x3F) === 0) ? null : ((rawPathByte >> 6) + 1);
 
     const size = effectivePkt.raw_hex ? Math.floor(effectivePkt.raw_hex.length / 2) : (pkt.raw_hex ? Math.floor(pkt.raw_hex.length / 2) : 0);
@@ -3206,9 +3209,8 @@
       ? `<div class="anomaly-banner" style="background:var(--warning, #f0ad4e); color:#000; padding:8px 12px; border-radius:4px; margin-bottom:8px; font-weight:600;"><svg class="ph-icon" aria-hidden="true"><use href="/icons/phosphor-sprite.svg#ph-warning"/></svg> Anomaly: ${escapeHtml(decoded.anomaly)}</div>`
       : '';
 
-    // Hop count display: use pathHops length (= effective observation's path_json).
-    // The raw_hex/path_json mismatch warning is logged above for diagnostics; the UI
-    // must stay self-consistent — top pill names and byte breakdown rows must agree.
+    // Keep the route-level display aligned with the literal raw_hex wire path.
+    // Fall back to path_json only when no raw packet bytes are available.
     const displayHopCount = pathHops.length;
     const obsIndicator = currentObs && observations.length > 1
       ? `<span style="font-size:0.8em;color:var(--text-muted);margin-left:6px">(observation ${observations.indexOf(currentObs) + 1} of ${observations.length})</span>`
@@ -3385,9 +3387,9 @@
       routeBtn.addEventListener('click', async () => {
         try {
           // Prefer server-side resolved_path if available
-          const serverResolved = getResolvedPath(pkt);
+          const serverResolved = getResolvedPath(effectivePkt);
           let resolvedKeys;
-          if (serverResolved && serverResolved.length === pathHops.length) {
+          if (canUseResolvedPath(pathHops, reportedPathHops, serverResolved)) {
             // Use server-resolved pubkeys, fall back to short prefix for null entries
             resolvedKeys = pathHops.map((h, i) => serverResolved[i] || h);
           } else {
@@ -3463,6 +3465,32 @@
     return rows ? `<table class="detail-decoded" style="width:100%;border-collapse:collapse;margin-top:8px">${rows}</table>` : '';
   }
 
+  function getWirePathHops(rawHex, routeType) {
+    if (!rawHex) return null;
+    if (typeof rawHex !== 'string' || rawHex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(rawHex)) return [];
+    const pathLenOffset = getPathLenOffset(routeType);
+    const pathByte = parseInt(rawHex.slice(pathLenOffset * 2, pathLenOffset * 2 + 2), 16);
+    if (isNaN(pathByte)) return [];
+    const hashSize = (pathByte >> 6) + 1;
+    const hashCount = pathByte & 0x3F;
+    const pathStart = pathLenOffset + 1;
+    if ((pathStart + hashCount * hashSize) * 2 > rawHex.length) return [];
+    const hops = [];
+    for (let i = 0; i < hashCount; i++) {
+      const start = (pathStart + i * hashSize) * 2;
+      const hex = rawHex.slice(start, start + hashSize * 2);
+      if (hex.length !== hashSize * 2) break;
+      hops.push(hex.toUpperCase());
+    }
+    return hops;
+  }
+
+  function canUseResolvedPath(wirePath, reportedPath, resolvedPath) {
+    if (!Array.isArray(wirePath) || !Array.isArray(reportedPath) || !Array.isArray(resolvedPath)) return false;
+    if (wirePath.length !== reportedPath.length || wirePath.length !== resolvedPath.length) return false;
+    return wirePath.every((hop, index) => String(hop).toUpperCase() === String(reportedPath[index]).toUpperCase());
+  }
+
   function buildFieldTable(pkt, decoded, pathHops, ranges) {
     const buf = pkt.raw_hex || '';
     const size = Math.floor(buf.length / 2);
@@ -3489,20 +3517,23 @@
     rows += fieldRow(off, 'Path Length', '0x' + (buf.slice(off * 2, off * 2 + 2) || '??'), hashCountVal === 0 ? `hash_count=0 (direct advert)` : `hash_size=${hashSizeVal} byte${hashSizeVal !== 1 ? 's' : ''}, hash_count=${hashCountVal}`);
     off += 1;
 
-    // Path — render hops from path_json (what this observation reported).
-    // Byte offsets advance by hashSize * pathHops.length to match.
+    // Path — decode the hop rows from the same raw bytes used by the hex strip.
+    // path_json can contain a resolved/extended route that is not the packet's
+    // literal wire path, so using it here makes byte labels disagree with the
+    // highlighted Path range.
     const hashSize = isNaN(pathByte0) ? 1 : ((pathByte0 >> 6) + 1);
-    if (pathHops.length > 0) {
-      rows += sectionRow('Path (' + pathHops.length + ' hops)', 'section-path');
-      for (let i = 0; i < pathHops.length; i++) {
+    const wirePathHops = getWirePathHops(buf, pkt.route_type) || [];
+    if (wirePathHops.length > 0) {
+      rows += sectionRow('Path (' + wirePathHops.length + ' hops)', 'section-path');
+      for (let i = 0; i < wirePathHops.length; i++) {
         const hopOff = off + i * hashSize;
-        const hex = String(pathHops[i] || '').toUpperCase();
+        const hex = wirePathHops[i];
         const hopHtml = HopDisplay.renderHop(hex, hopNameCache[hex]);
         const label = `Hop ${i} — ${hopHtml}`;
         rows += fieldRow(hopOff, label, hex, '');
       }
-      off += hashSize * pathHops.length;
     }
+    if (!isNaN(pathByte0)) off += hashSize * hashCountVal;
 
     // TRACE SNR values (from header path bytes, decoded by backend)
     if (decoded.type === 'TRACE' && decoded.snrValues && decoded.snrValues.length > 0) {
@@ -3867,6 +3898,8 @@
       renderDecodedPacket,
       kv,
       buildFieldTable,
+      getWirePathHops,
+      canUseResolvedPath,
       sectionRow,
       fieldRow,
       renderTimestampCell,

@@ -4,12 +4,16 @@
  * Usage: node test-e2e-playwright.js
  */
 const { chromium } = require('playwright');
+const { createFailureDiagnostics } = require('./scripts/e2e-failure-diagnostics');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const GO_BASE = process.env.GO_BASE_URL || '';  // e.g. https://analyzer.00id.net:82
 const results = [];
+let failureDiagnostics;
+const testFilter = process.env.E2E_TEST_FILTER ? new RegExp(process.env.E2E_TEST_FILTER) : null;
 
 async function test(name, fn) {
+  if (testFilter && !testFilter.test(name)) return;
   try {
     await fn();
     results.push({ name, pass: true });
@@ -22,6 +26,9 @@ async function test(name, fn) {
     }
     results.push({ name, pass: false, error: err.message });
     console.log(`  \u274c ${name}: ${err.message}`);
+    if (failureDiagnostics) {
+      await failureDiagnostics.capture({ test: name, error: err });
+    }
     console.log(`\nFail-fast: stopping after first failure.`);
     process.exit(1);
   }
@@ -60,6 +67,16 @@ async function run() {
     try { localStorage.setItem('live-controls-expanded', 'true'); } catch (_) {}
   });
   const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('Page.enable');
+  failureDiagnostics = createFailureDiagnostics({
+    page,
+    context,
+    browser,
+    cdp,
+    baseUrl: BASE,
+    outputDir: process.env.E2E_FAILURE_EVIDENCE_DIR,
+  });
   page.setDefaultTimeout(10000);
 
   console.log(`\nRunning E2E tests against ${BASE}\n`);
@@ -2253,8 +2270,12 @@ async function run() {
   await test('#1468: live WS CHAN message with no payload.channel is dropped (no "unknown" bucket)', async () => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(`${BASE}/#/channels`, { waitUntil: 'domcontentloaded' });
-    // Wait for the channels init() to mount and expose the test hook.
+    // The test hook is installed synchronously, while the initial /channels
+    // request is still in flight. Wait for that request to replace the loading
+    // state before taking the delta snapshot, otherwise its legitimate result
+    // can be attributed to the injected orphan packet.
     await page.waitForFunction(() => typeof window._channelsProcessWSBatchForTest === 'function', { timeout: 10000 });
+    await page.waitForFunction(() => !document.querySelector('#chList .ch-loading'), { timeout: 10000 });
 
     // Snapshot starting state so we can compare deltas.
     const before = await page.evaluate(() => {
@@ -2295,6 +2316,7 @@ async function run() {
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(`${BASE}/#/channels`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => typeof window._channelsProcessWSBatchForTest === 'function', { timeout: 10000 });
+    await page.waitForFunction(() => !document.querySelector('#chList .ch-loading'), { timeout: 10000 });
 
     const sentinel = '__test_chan_1468_' + Date.now();
     const before = await page.evaluate((name) => {
@@ -2605,12 +2627,26 @@ async function run() {
     await gotoPackets(page);
     await page.waitForTimeout(500);
 
-    // Click rows until we find one whose detail pane renders a multi-hop path
-    const rows = await page.$$('table tbody tr[data-action]');
+    // Re-query by index before each click. The virtualized packet table may
+    // replace rows after its initial render, which detaches cached handles.
+    const rowCount = await page.locator('table tbody tr[data-action]').count();
     let found = false;
-    for (let i = 0; i < Math.min(rows.length, 15); i++) {
-      await rows[i].click({ timeout: 3000 }).catch(() => null);
-      await page.waitForTimeout(500);
+    for (let i = 0; i < Math.min(rowCount, 15); i++) {
+      const row = page.locator('table tbody tr[data-action]').nth(i);
+      const expectedHash = await row.evaluate(element => {
+        const hash = element.getAttribute('data-value');
+        element.click();
+        return hash;
+      }).catch(() => null);
+      if (!expectedHash) continue;
+      const loaded = await page.waitForFunction(
+        hash => window.location.hash.includes(`/packets/${hash}`) &&
+          document.querySelector('.detail-hash')?.textContent.includes(hash) &&
+          document.querySelector('.hex-dump') && document.querySelector('table.field-table'),
+        expectedHash,
+        { timeout: 5000 },
+      ).then(() => true, () => false);
+      if (!loaded) continue;
 
       const result = await page.evaluate(() => {
         // Path pill: <dt>Path</dt><dd><span class="badge ...">N hops</span> ...names...</dd>
@@ -2685,11 +2721,24 @@ async function run() {
     await gotoPackets(page);
     await page.waitForTimeout(500);
 
-    const rows = await page.$$('table tbody tr[data-action]');
+    const rowCount = await page.locator('table tbody tr[data-action]').count();
     let checked = 0;
-    for (let i = 0; i < Math.min(rows.length, 25) && checked < 3; i++) {
-      await rows[i].click({ timeout: 3000 }).catch(() => null);
-      await page.waitForTimeout(400);
+    for (let i = 0; i < Math.min(rowCount, 25) && checked < 3; i++) {
+      const row = page.locator('table tbody tr[data-action]').nth(i);
+      const expectedHash = await row.evaluate(element => {
+        const hash = element.getAttribute('data-value');
+        element.click();
+        return hash;
+      }).catch(() => null);
+      if (!expectedHash) continue;
+      const loaded = await page.waitForFunction(
+        hash => window.location.hash.includes(`/packets/${hash}`) &&
+          document.querySelector('.detail-hash')?.textContent.includes(hash) &&
+          document.querySelector('.hex-dump') && document.querySelector('table.field-table'),
+        expectedHash,
+        { timeout: 5000 },
+      ).then(() => true, () => false);
+      if (!loaded) continue;
 
       const result = await page.evaluate(() => {
         const dump = document.querySelector('.hex-dump');
@@ -3562,6 +3611,12 @@ async function run() {
   });
 
   await browser.close();
+
+  // An explicit selector is a diagnostic gate, not permission to pass zero cases.
+  if (testFilter && results.length === 0) {
+    console.error('No E2E tests matched E2E_TEST_FILTER');
+    process.exit(1);
+  }
 
   // Summary
   const skipped = results.filter(r => r.skipped).length;

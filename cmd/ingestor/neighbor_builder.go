@@ -234,23 +234,45 @@ func (s *Store) buildAndPersistNeighborEdges() (int, error) {
 		return 0, nil
 	}
 
+	// Coalesce contributions before taking the writer lock. The observation
+	// batch bounds this slice/map; retain first-seen order so write failures
+	// remain deterministic. Keep edges intact for the warm-up drain count.
+	type contribution struct {
+		edgeRow
+		count int
+	}
+	var contributions []contribution
+	pairIndex := make(map[[2]string]int)
+	for _, e := range edges {
+		pair := [2]string{e.a, e.b}
+		if i, ok := pairIndex[pair]; ok {
+			contributions[i].count++
+			if e.ts > contributions[i].ts {
+				contributions[i].ts = e.ts
+			}
+		} else {
+			pairIndex[pair] = len(contributions)
+			contributions = append(contributions, contribution{e, 1})
+		}
+	}
+
 	// Wrap the whole edge-persist tx under writer-perf instrumentation
 	// (#1340). Slow neighbor-builder ticks (the #1339 root cause) now
 	// show up on /api/perf under component=neighbor_builder.
 	var inserted int
 	err = s.WriterTx("neighbor_builder", func(tx *sql.Tx) error {
 		stmt, err := tx.Prepare(`INSERT INTO neighbor_edges (node_a, node_b, count, last_seen)
-			VALUES (?, ?, 1, ?)
+			VALUES (?, ?, ?, ?)
 			ON CONFLICT(node_a, node_b) DO UPDATE SET
-			  count = count + 1,
+			  count = count + excluded.count,
 			  last_seen = MAX(last_seen, excluded.last_seen)`)
 		if err != nil {
 			return fmt.Errorf("prepare: %w", err)
 		}
 		defer stmt.Close()
 		var firstErr error
-		for _, e := range edges {
-			if _, err := stmt.Exec(e.a, e.b, e.ts); err != nil && firstErr == nil {
+		for _, e := range contributions {
+			if _, err := stmt.Exec(e.a, e.b, e.count, e.ts); err != nil && firstErr == nil {
 				firstErr = err
 			}
 		}

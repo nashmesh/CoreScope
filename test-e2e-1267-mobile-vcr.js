@@ -15,8 +15,8 @@ const BASE = process.env.BASE_URL || 'http://localhost:13581';
 (async () => {
   const browser = await chromium.launch({
     headless: true,
-    executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-    args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
   });
   const context = await browser.newContext({
     viewport: { width: 375, height: 812 },

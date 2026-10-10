@@ -65,7 +65,7 @@ function assert(c, m) { if (!c) throw new Error(m || 'assertion failed'); }
 (async () => {
   const browser = await chromium.launch({
     headless: true,
-    executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+    executablePath: process.env.CHROMIUM_PATH || undefined,
     args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
   });
   const ctx = await browser.newContext();

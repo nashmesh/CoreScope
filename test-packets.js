@@ -4,8 +4,11 @@ const vm = require('vm');
 const fs = require('fs');
 const assert = require('assert');
 
-let passed = 0, failed = 0;
+let passed = 0, failed = 0, selected = 0;
+const testNameFilter = process.env.PACKETS_TEST_NAME_FILTER || '';
 function test(name, fn) {
+  if (testNameFilter && !name.includes(testNameFilter)) return;
+  selected++;
   try {
     fn();
     passed++;
@@ -762,12 +765,39 @@ console.log('\n=== packets.js: buildFieldTable ===');
   });
 
   test('buildFieldTable renders path hops', () => {
-    const pkt = { raw_hex: 'c042aabb', route_type: 1, payload_type: 0 };
+    const pkt = { raw_hex: 'c002aabb', route_type: 1, payload_type: 0 };
     const decoded = { destHash: 'xx' };
     const result = api.buildFieldTable(pkt, decoded, ['aa', 'bb'], []);
     assert(result.includes('Path (2 hops)'));
     assert(result.includes('Hop 0'));
     assert(result.includes('Hop 1'));
+  });
+
+  test('wire path: buildFieldTable derives hop rows from raw bytes when path_json differs', () => {
+    const pkt = { raw_hex: '11427d1d1f5d300d', route_type: 1, payload_type: 4 };
+    const decoded = { type: 'ADVERT', pubKey: '300d' };
+    const result = api.buildFieldTable(pkt, decoded, ['7D1D', 'DA2A', 'EACF', '1000', 'EC34', '4000'], []);
+    assert(result.includes('Path (2 hops)'));
+    assert(result.includes('7D1D'));
+    assert(result.includes('1F5D'));
+    assert(!result.includes('DA2A'));
+  });
+
+  test('wire path: getWirePathHops treats present but truncated raw bytes as empty', () => {
+    assert.deepStrictEqual(Array.from(api.getWirePathHops('11', 1)), []);
+    assert.deepStrictEqual(Array.from(api.getWirePathHops('1102AA', 1)), []);
+  });
+
+  test('wire path: getWirePathHops treats malformed raw bytes as empty', () => {
+    assert.deepStrictEqual(Array.from(api.getWirePathHops('1141ZZZZ', 1)), []);
+    assert.deepStrictEqual(Array.from(api.getWirePathHops('1141AAAAF', 1)), []);
+  });
+
+  test('wire path: canUseResolvedPath rejects identities from a different reported path', () => {
+    assert.strictEqual(
+      api.canUseResolvedPath(['7D1D', '1F5D'], ['7D1D', 'DA2A'], ['pubkey-a', 'pubkey-b']),
+      false
+    );
   });
 
   test('buildFieldTable renders ADVERT payload', () => {
@@ -1243,4 +1273,8 @@ console.log('\n=== packets.js: scroll position preserved across renderTableRows 
 // ===== SUMMARY =====
 console.log(`\n${'='.repeat(40)}`);
 console.log(`packets.js tests: ${passed} passed, ${failed} failed`);
+if (testNameFilter && selected === 0) {
+  console.error(`No packets.js tests matched filter: ${testNameFilter}`);
+  process.exit(1);
+}
 if (failed > 0) process.exit(1);

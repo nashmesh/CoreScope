@@ -74,7 +74,7 @@ async function findPacketDetailByType(page, predicate, maxRows = 40) {
 (async () => {
   const browser = await chromium.launch({
     headless: true,
-    executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+    executablePath: process.env.CHROMIUM_PATH || undefined,
     args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
   });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -86,7 +86,18 @@ async function findPacketDetailByType(page, predicate, maxRows = 40) {
 
   await step('Non-ADVERT packet detail does NOT render <dt>Location</dt>', async () => {
     await gotoPackets(page);
-    // Filter to a non-ADVERT type to make the search efficient.
+    // Select the required category before a bounded row scan. The fixture's
+    // leading rows may legitimately all be ADVERTs; unfiltered first-N order
+    // does not prove that a non-ADVERT fixture packet is missing.
+    const input = await page.$('#packetFilterInput');
+    assert(input, 'packet filter input must be available');
+    await input.fill('type != ADVERT');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => [...document.querySelectorAll('#pktBody tr[data-hash][data-action]')]
+      .some(row => {
+        const type = row.querySelector('td.col-type')?.getAttribute('data-filter-value');
+        return type && type !== 'Advert';
+      }), null, { timeout: 15000 });
     const meta = await findPacketDetailByType(
       page,
       (m) => m.typeName && m.typeName !== 'Advert',
@@ -101,11 +112,14 @@ async function findPacketDetailByType(page, predicate, maxRows = 40) {
     await gotoPackets(page);
     // Filter UI to ADVERTs to guarantee we find one.
     const fInput = await page.$('#packetFilterInput');
-    if (fInput) {
-      await fInput.fill('type == ADVERT');
-      await page.keyboard.press('Enter');
-      await page.waitForTimeout(600);
-    }
+    assert(fInput, 'packet filter input must be available');
+    // Explicitly replace the preceding non-ADVERT filter, then wait for the
+    // rendered category rather than sampling a fixed debounce delay.
+    await fInput.fill('type == ADVERT');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => [...document.querySelectorAll('#pktBody tr[data-hash][data-action]')]
+      .some(row => row.querySelector('td.col-type')?.getAttribute('data-filter-value') === 'Advert'),
+      null, { timeout: 15000 });
     const meta = await findPacketDetailByType(
       page,
       (m) => m.typeName === 'Advert' && m.hasLocation,
