@@ -15,17 +15,18 @@ This opt-in workflow adds a local-model review comment to eligible pull requests
 
 1. An authorized repository-scoped or explicitly authorized runner with labels `self-hosted`, `linux`, `x64`, `pr-agent-local`.
 2. Python 3.11+ at `/usr/bin/python3`, the standard user-local uv executable at `$HOME/.local/bin/uv`, and outbound access to GitHub and dependency registries.
-3. A direct reachable private OpenAI-compatible endpoint advertising `vllm-sr/qwen3.8-flash-next-iq3_s`. The current compatibility-key configuration assumes that endpoint accepts the non-secret compatibility key shown in the workflow. Do not publish a private endpoint or real credentials in source.
+3. A directly reachable private OpenAI-compatible endpoint serving local Qwen and a dedicated credential for inference on that endpoint. Do not reuse a personal API key or publish the endpoint or credentials in source.
 4. Runner-owned work, temporary environment and cache storage with adequate headroom. Shared-organization runners must not expose personal-agent homes or administrative credentials to jobs. Do not reuse another repository's registered runner merely by copying its labels.
 
 ## Activation
 
-After the workflow is reviewed and merged into `master`, configure repository Actions variables:
+After the workflow is reviewed and merged into `master`, save the dedicated inference key as the repository Actions secret `PR_AGENT_LOCAL_API_KEY`. Then configure repository Actions variables:
 
 - `PR_AGENT_LOCAL_API_BASE`: the directly reachable private API base, including `/v1`.
-- `PR_AGENT_PILOT_ENABLED`: `true` only after runner and endpoint qualification.
+- `PR_AGENT_LOCAL_MODEL_ID`: the exact local Qwen model ID returned by that endpoint's `/v1/models` (do not add LiteLLM's `openai/` provider prefix).
+- `PR_AGENT_PILOT_ENABLED`: set to `true` last, only after runner and endpoint qualification.
 
-With either setting absent, or the enable flag not exactly `true`, the job does not run. An Actions admin must arrange runner access; source-write or maintain access alone does not establish that authority. Verify one disposable unmerged canary with an actual local completion and GitHub comment readback. Close the canary without merging it.
+If the endpoint or model ID is missing, or the enable flag is not exactly `true`, the job is skipped. If the inference secret is missing, the review step fails before making an inference request. An Actions admin must arrange runner access; source-write or maintain access alone does not establish that authority. Verify one disposable unmerged canary with an actual local completion and GitHub comment readback. Close the canary without merging it.
 
 ## Operation and limits
 

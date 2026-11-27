@@ -19,6 +19,7 @@ jobs:
       github.repository == 'nashmesh/CoreScope' &&
       vars.PR_AGENT_PILOT_ENABLED == 'true' &&
       vars.PR_AGENT_LOCAL_API_BASE != '' &&
+      vars.PR_AGENT_LOCAL_MODEL_ID != '' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft
     runs-on: [self-hosted, linux, x64, pr-agent-local]
@@ -49,15 +50,16 @@ jobs:
       - name: Review with local Qwen (advisory only)
         working-directory: pr-agent-tool
         shell: bash
-        run: '"$UV_PROJECT_ENVIRONMENT/bin/python" -m pr_agent.servers.github_action_runner'
+        run: |
+          : "${OPENAI_KEY:?Missing Actions secret PR_AGENT_LOCAL_API_KEY}"
+          "$UV_PROJECT_ENVIRONMENT/bin/python" -m pr_agent.servers.github_action_runner
         env:
           UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/pr-agent-venv
           TMPDIR: ${{ runner.temp }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The private router currently accepts a non-secret compatibility key.
-          OPENAI_KEY: local-no-key-required
+          OPENAI_KEY: ${{ secrets.PR_AGENT_LOCAL_API_KEY }}
           OPENAI.API_BASE: ${{ vars.PR_AGENT_LOCAL_API_BASE }}
-          CONFIG.MODEL: openai/vllm-sr/qwen3.8-flash-next-iq3_s
+          CONFIG.MODEL: openai/${{ vars.PR_AGENT_LOCAL_MODEL_ID }}
           CONFIG.FALLBACK_MODELS: '[]'
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: '163840'
           CONFIG.MAX_MODEL_TOKENS: '32000'
